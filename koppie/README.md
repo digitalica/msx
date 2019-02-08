@@ -4,3 +4,7 @@ Door ook het videoRAM te gebruiken hoefde de disk minder vaak gewisseld te worde
 
 Gepubliceerd in 
 [MSX Computer Magazine nr. 18 – nov 1987](https://msxcomputermagazine.nl/archief/mcm-18/).
+
+
+
+[back](../README.md)
