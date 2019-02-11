@@ -21,11 +21,6 @@ of [Generation MSX](https://www.generation-msx.nl/software/hisoft/devpac80/2494/
 De tapstops stonden op 14 en 40 in de source (.GEN) files. Hier staat daarom ook altijd een .GEN.TXT
 file waaron de tabs omgezet zijn naar spaties.
 
-Omzetting is gedaan in Linux CLI met:
-```bash
-expand -t "14,40" 
-``` 
-
 
 ## Emulatoren
 [WebMSX](https://webmsx.org/)
