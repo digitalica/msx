@@ -1,0 +1,1812 @@
+;
+;
+; DSORT is een .COM programma in ML om de directory
+; van enkel en dubbelzijdige MSX disks op MSX 1 en 2
+; computers te kunnen sorteren. En dan niet alleen 
+; op alfabetische volgorde, maar in iedere gewenste
+; volgorde. December 1987 by R W L
+; Dit GEN-file kan overigens ook een .BIN versie genereren
+; Dit was nodig i.v.m. publicatie. (Een .COM ontwikkelt
+; makkelijker)
+
+; Versie 1.01 kan (als .COM file) ook de B-drive gebruiken.
+; voorbeeld: DSORT B:
+
+MSXDOS  equ 1
+BLOADR  equ 0
+VERSION equ MSXDOS      ; welke versie assembleren?
+
+YES     equ 1
+NO      equ 0
+CHECKSM equ NO          ; assemble 'AA' checksum (testversie)?
+
+        if .not.(VERSION=0)
+DOSENTR equ #0005       ; entry naar DOS routines
+        else
+DOSENTR equ #F37D       ; idem voor basic versie
+        endc
+
+EXPTBL  equ #FCC1       ; slot adres main rom
+CALLSLT equ #001C       ; inter slot call (ook uit DOS)
+RDSLT   equ #000C       ; inter slot read (ook uit DOS)
+
+CURFKEY equ #F87F       ; fuctietoetsen
+LINELEN equ #F3AE       ; regellengte
+FORCLR  equ #F3E9       ; voorgrond kleur
+BAKCLR  equ #F3EA       ; achtergrond kleur
+FKEYSW  equ #F3DE       ; functietoetsen zichtbaar?
+CHGCLR  equ #0062       ; kleur verander routine in BIOS
+INITXT  equ #006C       ; zet 40 koloms mode (BIOS)
+INIT32  equ #006F       ; zet 32 koloms mode (BIOS)
+FKEYOF  equ #00CC       ; functie toetsen uit (BIOS)
+FKEYSB  equ #00C9       ; vw. tonen functietoetsen
+SCRMODE equ #FCAF       ; huidige screen mode
+PATTERN equ #F3B7       ; hier staat het adress van de karakter gen.
+NAMETAB equ #F3B3       ; hier staat de schermtabel
+COMLINE equ #0080       ; MSXDOS Command Line
+
+BVDPIN  equ #0006       ; adres waar input poort uit VDP staat
+BVDPOUT equ #0007       ; adres waar output poort naar VDP staat
+BSETRD  equ #0050       ; bios routine set vdp for read
+BSETWR  equ #0053       ; bios routine set vdp for write
+
+BEEP    equ #00C0       ; geeft een pieptoon
+DISKIO  equ #0144       ; disk input/output
+
+DIRINP  equ #07         ; direct input
+GETDEF  equ #19         ; get default drive name
+LOGDRV  equ #18         ; get on line drives
+DRVINFO equ #1B         ; get drive information
+
+DIRLEN  equ 112*32      ; lengte directory
+FKEYLEN equ 10*16       ; lengte functietoetse gebied
+KARLEN  equ 256*8       ; lengte karakterset
+SCRLEN  equ 40*24       ; lengte name table scherm
+ARLEN   equ 224         ; lengte aray
+
+CALLDOS macro @FUN,@ARG ; macro om DOS routines aan te roepen,
+        ld c,@FUN       ; eerst functienr. dan eventueel waarde 'de'
+        if "@ARG">""    ; is er een tweede parameter?
+        ld de,@ARG
+        endc
+        call DOSENTR
+        endm
+
+        if .not.(VERSION=0)     ; if DOS versie
+CALBIOS  macro @FUN
+         push af
+         ld a,(EXPTBL)  ; haal slot adres MAIN ROM
+         push af
+         pop iy         ; in hoge bits van iy
+         ld ix,@FUN     ; functie nr. in IX
+         pop af
+         call CALLSLT
+         ei             ; interupts weer aan
+         endm
+        else
+CALBIOS  macro @FUN
+         call @FUN
+         ei
+         endm
+        endc
+
+MOVE    macro @BYTES,@VAN,@NAAR
+        ld bc,@BYTES
+        ld de,@NAAR
+        ld hl,@VAN
+        ldir
+        endm
+
+        if VERSION=0    ; if bload versie
+         defb #FE
+         defw START
+         defw EIND
+         defw START
+         org #C000
+        endc
+
+START   jp MENTRY       ; main entry
+
+; routine om de inhoud van hl met 32 te vermenigvuldigen
+HL_32X  add hl,hl       ;*2
+        add hl,hl       ;*4
+        add hl,hl       ;*8
+        add hl,hl       ;*16
+        add hl,hl       ;*32
+        ret
+
+; routine om de inhoud van hl met 40 te vermenigvuldigen
+HL_40X  add hl,hl       ;*2
+        add hl,hl       ;*4
+        add hl,hl       ;*8
+        push de         ; bewaar de
+        push hl         ; bewaar 8 * hl
+        add hl,hl       ;*16
+        add hl,hl       ;*32
+        pop de          ; de = 8 * hl
+        add hl,de       ;*40
+        pop de          ; haal de terug
+        ret
+
+; COMPARN vergelijkt 2 11 bytes gebieden en geeft
+; gewoon C en Z flag terug (nooit Z dus...)
+COMPARN ld a,(IY)       ; iy wijst naar 'eerste'
+        cp (IX)         ; ix wijst naar 'volgende'
+        ret nz
+        ld a,(IY+1)
+        cp (IX+1)
+        ret nz
+        ld a,(IY+2)
+        cp (IX+2)
+        ret nz
+        ld a,(IY+3)
+        cp (IX+3)
+        ret nz
+        ld a,(IY+4)
+        cp (IX+4)
+        ret nz
+        ld a,(IY+5)
+        cp (IX+5)
+        ret nz
+        ld a,(IY+6)
+        cp (IX+6)
+        ret nz
+        ld a,(IY+7)
+        cp (IX+7)
+        ret nz
+        ld a,(IY+8)
+        cp (IX+8)
+        ret nz
+        ld a,(IY+9)
+        cp (IX+9)
+        ret nz
+        ld a,(IY+10)
+        cp (IX+10)
+        ret
+
+; COMPARE doet hetzelfde als de routine hierboven,
+; maar dan voor EXT sorts.
+COMPARE ld a,(IY+8)
+        cp (IX+8)
+        ret nz
+        ld a,(IY+9)
+        cp (IX+9)
+        ret nz
+        ld a,(IY+10)
+        cp (IX+10)
+        ret nz
+        ld a,(IY)
+        cp (IX)
+        ret nz
+        ld a,(IY+1)
+        cp (IX+1)
+        ret nz
+        ld a,(IY+2)
+        cp (IX+2)
+        ret nz
+        ld a,(IY+3)
+        cp (IX+3)
+        ret nz
+        ld a,(IY+4)
+        cp (IX+4)
+        ret nz
+        ld a,(IY+5)
+        cp (IX+5)
+        ret nz
+        ld a,(IY+6)
+        cp (IX+6)
+        ret nz
+        ld a,(IY+7)
+        cp (IX+7)
+        ret nz
+        ld a,(IY+8)
+        cp (IX+8)
+        ret  
+
+; Nu de COMPU routine, die een Carry geeft
+; als er verwisseld moet worden voor 'UP'
+COMPU   call COMPARN
+        ccf
+        ret nz
+        or a            ; gelijk (??) no change
+        ret
+
+; Nu de COMPD routine, de een Carry geeft
+; als er verwisseld moet worden voor 'DOWN'
+COMPD   call COMPARN
+        ret
+
+; Nu de COMPEU routine, die een Carry geeft
+; als er verwisseld moet worden voor 'EXT. UP'
+COMPEU  call COMPARE
+        ccf
+        ret nz
+        or a
+        ret
+
+; Nu de COMPED routine, die een Carry geeft
+; als er verwisseld moet worden voor 'EXT. DOWN'
+COMPED  call COMPARE
+        ret
+
+; de Call (hl) routine.......
+COMPSUB jp (hl)
+
+; Nu de BUBBLE sort routine, die het hele zaakje
+; sorteerd, en dan een return maakt naar DENTRY
+BUBBLE  call SETINST
+        ld b,112        ; zoek 112 entry's af
+BUBBLEA push bc
+        dec b
+        ld c,b
+        ld b,0          ; bc=nr. entry
+        ld hl,ARRAY+1
+        add hl,bc
+        add hl,bc       ; hl=adres info byte
+        ld a,(hl)
+        and %11         ; lage 2 bits
+        cp %10
+        pop bc
+        jr z,BUBBLEB    ; start als valid en unlocked
+        djnz BUBBLEA    ; zoek verder
+        jp NENTRY       ; exit, geen valid entry's
+BUBBLEB dec b
+BUBBLE0 push bc         ; dit is de buitenste 'Bubble' loop
+        ld a,255
+        ld (BUBFLAG),a  ; zet de flag op niet stoppen
+        dec b
+        ld c,b
+        ld b,0          ; bc=entry nr.
+        ld hl,ARRAY+1
+        add hl,bc
+        add hl,bc       ; hl=adres info byte
+        ld a,(hl)
+        and %11         ; lage 2 bits
+        cp %10
+        jr nz,BUBBLE1   ; sla over als niet valid of locked
+        pop bc
+        xor a
+        ld (BUBFLAG),a  ; zet flag op stoppen
+        push bc         ; haal even teller terug
+        ld c,b          ; maximale waarde binnenlus
+BUBBLE2 ld a,c          ; Dit is de binnenste bubble loop
+        sub b           ; oplopend tellen
+        ld l,a
+        ld h,0          ; plaats in ARRAY
+        add hl,hl
+        ld de,ARRAY+1
+        add hl,de       ; adres info byte
+        ld a,(hl)
+        and %11
+        cp %10
+        jr nz,BUBBLE3   ; sla over als niet valid of locked
+        push hl
+        dec hl
+        ld l,(hl)
+        ld h,0          ; haal nr. dir. entry
+        push hl
+        pop iy
+        pop hl
+        push hl         ; herstel hl
+BUBBLE4 inc hl
+        inc hl
+        bit 1,(hl)
+        jr z,BUBBLE4    ; zoek eerstvolgende valid entry
+        bit 0,(hl)
+        jr nz,BUBBLE4   ; terug als locked
+        push hl
+        ld de,DIRAREA
+        dec hl
+        ld l,(hl)
+        ld h,0          ; haal dir. nummer
+        call HL_32X
+        add hl,de
+        push hl
+        pop ix          ; in ix
+        add iy,iy
+        add iy,iy
+        add iy,iy
+        add iy,iy
+        add iy,iy       ; *32
+        add iy,de       ; in iy 
+        ld hl,(ROUTINE)
+        call COMPSUB    ; compare subroutine
+        pop ix
+        pop iy
+        jr nc,BUBBLE3
+        ld a,255
+        ld (BUBFLAG),a
+        ld d,(ix-1)
+        ld e,(iy-1)
+        ld (iy-1),d
+        ld (ix-1),e
+        ld d,(ix)
+        ld e,(iy)
+        ld (iy),d
+        ld (ix),e       ; verwissel deze twee bytes
+BUBBLE3 djnz BUBBLE2
+BUBBLE1 pop bc
+        ld a,(BUBFLAG)
+        or a            ; check flag
+        jp z,DENTRY
+        dec b
+        jp nz,BUBBLE0
+        jp DENTRY
+
+; Deze routine zet op elke MSX een 40 kolommen
+; zwart-wit beeld op, en onthoud alle oude waardes
+; voor de routine RESSCRN (restore screen)
+; tevens worden de functietoetsen gezet.
+SETSCRN MOVE FKEYLEN,CURFKEY,SAVFKEY
+        MOVE FKEYLEN,NEWFKEY,CURFKEY
+        ld a,(SCRMODE)
+        ld (RES0),a     ; onthou huidige screen mode
+        ld a,(LINELEN)
+        ld (RES1),a     ; onthou oude regellengte
+        ld a,40
+        ld (LINELEN),a  ; zet regellengte op 40 karakters
+        ld a,(FORCLR)
+        ld (RES2),a     ; onthou voorgrond kleur
+        ld a,15
+        ld (FORCLR),a   ; zet voorgrond kleur wit
+        ld a,(BAKCLR)
+        ld (RES3),a     ; onthou achtergrond kleur
+        ld a,1
+        ld (BAKCLR),a   ; zet achtergrond zwart
+        ld a,(FKEYSW)
+        ld (RES4),a     ; onthou stand functie toetsen
+        CALBIOS FKEYOF  ; zet ze uit
+        CALBIOS INITXT  ; zet text mode
+        CALBIOS CHGCLR  ; zet kleuren
+        ret
+
+; PREPIO is de routine die de parameters voor de
+; screen I/O ophaald uit het main rom, en in het
+; ram haalt, zodat er geprint kan worden. Tevens
+; wordt de karakterset door deze routine in orde
+; gemaakt (bovenste helft inverse)
+PREPIO  ld a,(EXPTBL)   ; haal slot adres main rom
+        ld hl,BVDPIN
+        call RDSLT      ; lees interslot
+        ld (VDPINP),a   ; VDP input poort
+        ld a,(EXPTBL)
+        ld hl,BVDPOUT
+        call RDSLT
+        ld (VDPOUT),a   ; VDP output poort
+        ld hl,(PATTERN)
+        ld de,8
+        add hl,de       ; hl=beginadres karakter 1
+        call SETWRIT
+        ld a,(VDPOUT)
+        ld c,a          ; poort nr. in c
+        ld b,8
+        ld a,%00000111
+PREPIO3 out (c),a
+        djnz PREPIO3    ; herhaal voor alle 8 bytes
+        ld hl,(PATTERN)
+        call SETREAD
+        ld b,0          ; (4x) 256 keer:
+        ld a,(VDPINP)
+        ld c,a          ; poortnr. in C
+        ld hl,TEMPINI   ; tijdelijk opslag gebied
+        ld de,KARLEN/2
+PREPIO2 in a,(c)
+        ld (hl),a
+        inc hl
+        dec de
+        ld a,d
+        or e            ; al 0?
+        jr nz,PREPIO2   ; alle bytes aflopen
+        ld hl,(PATTERN)
+        ld de,KARLEN/2  ; 1K verder (2e helft)
+        add hl,de
+        push de
+        call SETWRIT
+        pop de
+        ld a,(VDPOUT)
+        ld c,a          ; poort nr. in c
+        ld hl,TEMPINI
+PREPIO1 ld a,(hl)
+        inc hl
+        cpl             ; inverteer regel
+        out (c),a       ; naar VDP
+        dec de
+        ld a,d
+        or e            ; al 0?
+        jr nz,PREPIO1   ; alle bytes aflopen
+        ei              ; interupts weer aan
+        ret
+
+RES0    defb 0  ; screen mode
+RES1    defb 0  ; regellengte
+RES2    defb 0  ; voorgrond
+RES3    defb 0  ; achtergrond
+RES4    defb 0  ; functietoetsen aan/uit
+
+VDPINP  defb 0  ; VDP input register
+VDPOUT  defb 0  ; VDP output register
+
+COLUMNS defb 2  ; aantal kolommen
+CURLIN  defb 0  ; huidige regel
+SCRLIN  defb 0  ; huidige hoogste schermregel
+
+; In de volgende twee bytes worden steeds de laatste twee
+; ontvangen letters opgeslagen, zodat eventuele 
+; commando's herkend kunnen worden. Het hele opslaan
+; gebeurd door de WAITKEY routine.
+
+LETTER1 defb 0  ; letters voor commando-herkenning
+LETTER2 defb 0
+
+CIJFER0 defb 0  ; hiet staat het entry-nummer,
+CIJFER1 defb 0  ; voor de DISPLAY routine
+CIJFER2 defb 0
+
+CURFLAG defb 0  ; flag voor inverteren of niet
+BUBFLAG defb 0  ; flag voor bubble sort
+
+DEFAULT defb 0  ; default drive name
+DIRSEC  defw 5  ; eerste directory sector
+DSKTYP  defb #F8; media ID byte
+
+ROUTINE defw 0  ; compare routine adres
+
+; SETREAD en SETWRIT stellen de VDP in op het lezen van
+; of schrijven naar VRAM. De interrupts worden uitgezet,
+; alleen de laagste 14 bits van hl zijn geldig. Alle 
+; registers blijven in tact.
+SETREAD push af
+        push ix
+        push iy
+        CALBIOS BSETRD
+        pop iy
+        pop ix
+        pop af
+        ret
+
+SETWRIT push af
+        push ix
+        push iy
+        CALBIOS BSETWR
+        pop iy
+        pop ix
+        pop af
+        ret
+
+; Deze routine hersteld het scherm weer in de oude toestand,
+; dus kleuren, screen 1/0, width, en functietoetsen.
+
+RESSCRN MOVE FKEYLEN,SAVFKEY,CURFKEY
+        ld a,(RES1)
+        ld (LINELEN),a  ; herstel regellengte
+        ld a,(RES2)
+        ld (FORCLR),a   ; herstel voorgrond
+        ld a,(RES3)
+        ld (BAKCLR),a   ; herstel achtergrond
+        ld a,(RES4)
+        ld (FKEYSW),a   ; herstel functietoetsen aan/uit
+        ld a,(RES0)
+        dec a           ; screen 1?
+        jr nz,RESSCR1
+        CALBIOS INIT32  ; screen 1 (kleuren meteen)
+        CALBIOS FKEYSB
+        ret
+RESSCR1 CALBIOS INITXT  ; screen 0
+        CALBIOS CHGCLR
+        CALBIOS FKEYSB
+        ret
+
+; WRITELN schrijft een reeks ascii-codes, afgesloten
+; door een 0 naar het VRAM. De coordinaten moeten in
+; hl gezet worden. Deze routine is snel, maar accepteerd
+; geen controle codes e.d. v.a. adres 'de'
+WRITELN ld b,0
+        ld c,l          ; kolom in bc
+        ld l,h
+        ld h,0          ; regelnr. in hl
+        call HL_40X     ; vermenigvuldig met 40
+        add hl,bc       ; tel kolom erbij op
+        ld bc,(NAMETAB)
+        add hl,bc       ; absoluut VRAM adres in hl
+        call SETWRIT    ; set VDP for write
+        ld a,(VDPOUT)
+        ld c,a          ; poortnr. in C
+        ld a,(de)       ; haal eerste teken
+WRITEL1 inc de
+        out (c),a       ; altijd minstens 1 karakter lang
+        ld a,(de)
+        or a
+        jr nz,WRITEL1
+        ei
+        ret
+
+; Deze routine schrijft alle standaard teksten op het scherm.
+; Dat wil zeggen: kopregel en instructies.
+SETTEXT ld hl,0         ; 0,0
+        ld de,KOPREG
+        call WRITELN
+        ld hl,#0317     ; 23,3
+        ld de,INSTR1
+        call WRITELN
+        ld hl,#0517     ; 23,5
+        ld de,INSTR2
+        call WRITELN
+        ld hl,#0716     ; 22,7
+        ld de,INSTR3
+        call WRITELN
+        ld hl,#0917     ; 23,9
+        ld de,INSTR4
+        call WRITELN
+        ld hl,#0B18     ; 24,11
+        ld de,INSTR5
+        call WRITELN
+        ld hl,#0D19     ; 25,13
+        ld de,INSTR6
+        call WRITELN
+        ld hl,#0F19     ; 25,15
+        ld de,INSTR7
+        call WRITELN
+        ld hl,#111B     ; 27,17
+        ld de,INSTR8
+        call WRITELN
+        ld hl,#131B     ; 27,19
+        ld de,INSTR9
+        call WRITELN
+        ld hl,#151C     ; 28,21
+        ld de,INSTR0
+        call WRITELN
+        ret
+
+KOPREG  defb ' This is' ; Kopregel
+        defb 1,'d'+128
+        defb 'ir'
+        defb 's'+128,'o'+128,'r'+128,'t'+128
+        defb ' 1.01 by',1,
+RWLADR  defb 'R'+128,'W'+128,'L'+128,' (ESC=help)'
+        defb 0
+
+INSTR1  defb 1,'s'+128  ; Save Filenames
+        defb 'ave',1    ; 14
+        defb 'f'+128
+        defb 'ilenames',0
+INSTR2  defb 1,'l'+128  ; Load Filenames
+        defb 'oad '     ; 14
+        defb 'f'+128
+        defb 'ilenames',0
+INSTR3  defb 1,'s'+128  ; Sort Down (A>>Z)
+        defb 'ort',1    ; 16
+        defb 'd'+128
+        defb 'own (Z>>A)',0
+INSTR4  defb 1,'s'+128  ; Sort Up
+        defb 'ort',1    ; 14
+        defb 'u'+128
+        defb 'p (A>>Z)',0
+INSTR5  defb 'sort',1   ; sort Ext. Up
+        defb 'e'+128    ; 14
+        defb 'xt.',1
+        defb 'd'+128,'o','w','n',0
+INSTR6  defb 'sort',1   ; sort Ext. Down
+        defb 'e'+128    ; 12
+        defb 'xt.',1
+        defb 'u'+128,'p',0
+INSTR7  defb 'all',1    ; all Names Up
+        defb 'n'+128    ; 12
+        defb 'ames',1
+        defb 'u'+128,'p',0
+INSTR8  defb '2',1      ; n CoLumn
+        defb 'c'+128    ; 8
+        defb 'o','l'+128
+        defb 'u','m','n',0
+INSTR9  defb 1,'u'+128  ; UnLock
+        defb 'n'        ; 6*
+        defb 'l'+128
+        defb 'o','c','k',0
+INSTR0  defb 1,'q'+128  ; QUit
+        defb 'u'+128    ; 4*
+        defb 'it'
+        defb 0
+
+; CHKDRV zet het default drive nummer dat
+; start bij 0 in 'DEFAULT'.
+CHKDRV  if VERSION=MSXDOS
+        ld a,(COMLINE)
+        or a            ; 0 of meer tekens?
+        jr z,CHKDRV1
+        ld b,a
+        ld hl,COMLINE+1
+CHKDRVB ld a,(hl)
+        cp ' '
+        jr nz,CHKDRVC
+        inc hl
+        djnz CHKDRVB    ; sla spaties over
+        jp CHKDRV1
+CHKDRVC ld a,b
+        cp 2
+        jr c,CHKDRV1    ; minder dan 2
+        inc hl
+        ld a,(hl)
+        cp ':'
+        jr nz,CHKDRV1   ; geen ':'
+        dec hl
+        ld a,(hl)
+        sub 'a'
+        jp nc,CHKDRV0
+        add a,32        ; correctie: hoofdletter
+CHKDRV0 ld (DEFAULT),a
+        cp 8
+        jr nc,CHKDRV1   ; nummer te hoog 
+        ld b,a
+        inc b
+        ld a,%10000000
+CHKDRVA rlca
+        djnz CHKDRVA    ; maak masker
+        push af
+        CALLDOS LOGDRV
+        pop af
+        and l
+        jr z,CHKDRV1    ; niet on line...
+        ld a,(DEFAULT)
+        inc a
+        ld e,a
+        CALLDOS DRVINFO ; vraag om disk voor Single drive systeem
+        ret
+CHKDRV1 endc
+        CALLDOS GETDEF  ; haal default drive in A
+        ld (DEFAULT),a
+        ret
+
+; COLNUM krijgt als invoer het aantal kolommen,
+; en past dat aan. Invoer in a (ascii)
+; past aan: scherm, tekst, en sys. variabele.
+COLNUM  ld e,a
+        ld (INSTR8),a   ; ook in standaard scherm
+        sub '0'         ; maak binair
+        ld (COLUMNS),a
+        ld a,e
+        push af
+        ld de,707       ; position on screen
+        ld hl,(NAMETAB)
+        add hl,de
+        call SETWRIT
+        ld a,(VDPOUT)
+        ld c,a
+        pop af          ; haal karakter terug
+        out (c),a       ; print karakter
+        ei
+        jp NENTRY
+
+MENTRY  call CHKDRV     ; haal default drive name
+        call SETSCRN    ; zet goede screen mode
+RENTRY  call CLS        ; goed effect bij ctrl-stop
+        call SETINST    ; wis instructie-letters
+        call PREPIO     ; prepare alle I/O acties
+        call INSTAR     ; zet oplopende waardes in array
+        call UNLOCK     ; haal overal lock weg
+        call CLRDIR     ; wis de directory
+        call VALID      ; test of alle entry's valid zijn
+        call HOMESUB    ; naar regel 0
+        ld a,2
+        ld (COLUMNS),a
+        ld a,'2'
+        ld (INSTR8),a   ; 2 kolommen
+CENTRY  call CLS        ; wis scherm
+        call CHKRWL     ; naam nog in orde?
+        call SETTEXT    ; schrijf text voor initscreen
+DENTRY  call DISPLAY    ; schrijf directory
+NENTRY  if .not.(CHECKSM=0)
+         call CHECK
+        endc
+        call WAITKEY    ; wacht op toets
+        cp 'S'
+        jp z,COMMAND
+        cp 'D'
+        jp z,COMMAND
+        cp 'L'
+        jp z,COMMAND
+        cp 'E'
+        jp z,COMMAND
+        cp 'N'
+        jp z,COMMAND
+        cp 'Q'
+        jp z,COMMAND
+        cp 'U'
+        jp z,COMMAND
+        cp 'L'
+        jp z,COMMAND
+        cp 'C'
+        jp z,COMMAND
+        cp 'F'
+        jp z,COMMAND
+        ld hl,LETTER2
+        ld (hl),0       ; not a command letter
+        cp 3
+        jr z,RENTRY     ; CTRL-STOP
+        cp #C
+        jr z,CENTRY     ; cls
+        cp '2'
+        jr c,MAIN1
+        cp '9'+1
+        jp c,COLNUM     ; aantal kolommen
+MAIN1   cp #1E
+        jp z,LINEU      ; regel omhoog
+        cp #1F
+        jp z,LINED      ; regel omlaag
+        cp #1C
+        jp z,PAGEU      ; pagina verder
+        cp #1D
+        jp z,PAGED      ; pagina terug
+        cp #B
+        jp z,HOME       ; naar entry 0
+        cp ' '
+        jp z,TRYLOCK    ; flip lock
+        cp 24
+        jp z,TRYLOCK    ; idem (select)
+        cp 8
+        jp z,DELLINE    ; delete line (bs)
+        cp 127
+        jp z,DELLINE    ; delete line (del)
+        cp 21
+        jp z,DELLINE    ; delete line (CTRL-U)
+        cp 18   
+        jp z,INSLINE    ; insetr line
+        cp 9
+        jp z,INSLINE    ; (tab)
+        cp 13
+        jp z,INSLINE    ; (return) 
+        cp 27
+        jp nz,NENTRY    ; loop until ESC
+        jr HELP
+
+; Deze routine laat de help-pagine zien.
+; Dan wordt er op een toets gewacht, en teruggesprongen
+; naar de CLS-entry 
+HELP    ld hl,HELPDAT
+        ld de,746       ; lengte help tekst
+        ld bc,0
+HELPC1  ld a,b
+        add a,(hl)
+        ld b,a
+        ld a,c
+        xor (hl)
+        ld c,a
+        inc hl
+        dec de
+        ld a,d
+        or e
+        jr nz, HELPC1
+        ld a,64         ; XOR
+        cp c
+        jp nz,NENTRY
+        ld a,212        ; ADD
+        cp b
+        jp NZ,NENTRY
+; Help tekst is OK nu, display:
+        call CLS        ; wis eerst scherm
+        ld hl,(NAMETAB)
+        call SETWRIT
+        ld a,(VDPOUT)
+        ld c,a
+        ld d,24
+        ld hl,HELPDAT
+HELP1   ld b,40
+        dec d
+        jr z,HELPEX
+HELP2   ld a,(hl)
+        or a
+        jr nz,HELP3
+        ld a,' '
+HELP4   out (c),a
+        djnz HELP4      ; maak regel af
+        inc hl
+        jr HELP1
+HELP3   out (c),a
+        inc hl
+        djnz HELP2
+HELPEX  call WAITKEY
+        call SETINST
+        jp CENTRY
+
+QUIT    CALBIOS BEEP
+        ld de,YOUSURE
+        ld hl,#1519
+        call WRITELN
+        call WAITKEY
+        cp 'Y'          ; accepteer Y en y
+        jp z,QUIT1
+        cp 'J'          ; of J en j
+        jp z,QUIT1
+        ld de,NOTSURE
+        ld hl,#1519
+        call WRITELN
+        CALL SETINST
+        jp NENTRY       ; next instruction
+QUIT1   call RESSCRN
+        CALLDOS 0
+
+YOUSURE defb "You're sure?",0
+NOTSURE defb "   ",1,"q"+128,"u"+128,"it    ",0
+
+; SWAPU verwisselt de 2 bytes op (hl) en de 2 bytes
+; daarna. Zonder enige registers te molesteren.
+; hl wijst naar de tweede byte!
+
+SWAPU   push ix
+        push de
+        push hl
+        pop ix
+        ld d,(ix-1)
+        ld e,(ix+1)
+        ld (ix-1),e
+        ld (ix+1),d     ; (ix-1) <> (ix+1)
+        ld d,(ix+0)
+        ld e,(ix+2)
+        ld (ix+2),d
+        ld (ix+0),e     ; (ix+0) <> (ix+2)
+        pop de
+        pop ix
+        ret
+        
+
+; SWAPD verwisselt de 2 bytes op (hl) en de 2 bytes
+; daarvoor. Zonder enige registers te molesteren.
+; hl wijst naar de tweede byte!
+SWAPD   push ix
+        push de
+        push hl
+        pop ix
+        ld d,(ix-1)
+        ld e,(ix-3)
+        ld (ix-1),e
+        ld (ix-3),d     ; (ix-1) <> (ix-3)
+        ld d,(ix-2)
+        ld e,(ix+0)
+        ld (ix+0),d
+        ld (ix-2),e     ; (ix+0) <> (ix-2)
+        pop de
+        pop ix
+        ret
+                
+; De LINEU routine probeerd de current line 1 regel
+; omhoog te schuiven.
+LINEU   ld a,(CURLIN)
+        or a
+        jr nz,LINEU1
+        call LOCKSU     ; probeer locks omhoog te schuiven
+        jp DENTRY
+LINEU1  dec a
+        ld (CURLIN),a
+        ld hl,SCRLIN
+        cp (hl)
+        jp nc,DENTRY    ; beweging binnen scherm
+        dec (hl)
+        call LOCKSU
+        jp DENTRY
+
+; LOCKSU is een routine die alle 'locked' files
+; een regel omhoog te schuiven.
+LOCKSU  ld hl,ARRAY+1
+        ld b,112
+LOCKSU1 bit 0,(hl)      ; locked?
+        jr z,LOCKSU2
+        inc hl
+        inc hl
+        djnz LOCKSU1    ; zoek eerste unlocked
+        ret             ; niet gevonden (onmogelijk!)
+LOCKSU2 dec b
+LOCKSU3 inc hl
+        inc hl
+        bit 0,(hl)
+        call nz,SWAPD   ; schuif als deze locked is
+        djnz LOCKSU3
+        ret
+
+; De LINED routine probeerd de current line 1 regel
+; omlaag te schuiven.
+LINED   ld a,(CURLIN)
+        cp 111
+        jr nz,LINED1
+        call LOCKSD     ; probeer nog wel locks omhoog te halen
+        jp DENTRY
+LINED1  inc a
+        ld (CURLIN),a
+        ld hl,SCRLIN
+        sub (hl)        ; resultaat moet < 19 zijn
+        cp 19
+        jp c,DENTRY     ; beweging binnen scherm
+        inc (hl)
+        call LOCKSD
+        jp DENTRY
+
+; LOCKSD is een routine die alle 'locked' files
+; een regel omlaag te schuiven.
+LOCKSD  ld hl,ARRAY+(112*2)-1
+        ld b,112
+LOCKSD1 bit 0,(hl)      ; locked?
+        jr z,LOCKSD2
+        dec hl
+        dec hl
+        djnz LOCKSD1    ; zoek eerste unlocked
+        ret             ; niet gevonden (onmogelijk!)
+LOCKSD2 dec b
+LOCKSD3 dec hl
+        dec hl
+        bit 0,(hl)
+        call nz,SWAPU
+        djnz LOCKSD3
+        ret
+
+
+; PAGED probeerd een pagina terug te gaan, anders een
+; BEEP. (1 pagina is 19 regels)
+PAGED   call LOCKSPU    ; altijd buiten scherm
+        ld a,(CURLIN)
+        or a
+        jp z,DENTRY     ; we zijn al op nr. 0
+        sub 19
+        jr nc,PAGED1    ; kan dat nog?
+        xor a
+PAGED1  ld (CURLIN),a
+        ld a,(SCRLIN)   ; nu scherm ook terug
+        sub 19
+        jr nc,PAGED2    ; kan dat nog?
+        xor a
+PAGED2  ld (SCRLIN),a
+        jp DENTRY
+
+; LOCKSPD haalt alle locks 1 pagina omlaag
+LOCKSPD ld b,19
+LOCKPD1 push bc
+        call LOCKSD
+        pop bc
+        djnz LOCKPD1
+        ret
+
+; PAGEU probeerd een pagina door te gaan, anders een
+PAGEU   call LOCKSPD    ; altijd buiten scherm
+        ld a,(CURLIN)
+        cp 111
+        jp z,DENTRY     ; we zijn al op nr. 111
+        add a,19
+        cp 112
+        jr c,PAGEU1
+        ld a,111
+PAGEU1  ld (CURLIN),a
+        ld a,(SCRLIN)
+        add a,19
+        cp 94
+        jr c,PAGEU2
+        ld a,93
+PAGEU2  ld (SCRLIN),a
+        jp DENTRY
+
+; LOCKSPU haalt alle locks 1 pagina omhoog
+LOCKSPU ld b,19
+LOCKPU1 push bc
+        call LOCKSU
+        pop bc
+        djnz LOCKPU1
+        ret
+
+; HOME is de routine om terug te gaan naar entry 0
+HOME    call HOMESUB    ; subroutine ook aan te roepen
+        call UNLOCK     ; wis eventuele locks
+        jp DENTRY       ; bij initialisatie procedure.
+HOMESUB xor a           ; beide op 0..
+        ld (CURLIN),a
+        ld (SCRLIN),a
+        ret
+
+; De DISPLAY routine zet het file-namen display op
+; het scherm, met de current name inverse.
+DISPLAY ld a,(SCRLIN)   ; bovenste scherm regel
+        inc a           ; nummer om bovenaan te laten zien
+        ld hl,CIJFER2   ; LETOP: het bovenste nummer in altijd
+        ld (hl),' '     ; kleiner dan 95, dus cijfer 2 altijd ' '!
+        ld hl,CIJFER1
+        ld (hl),' '     ; neem aan kleiner dan 10
+        cp 10           ; nog meer dan 10?
+        jr c,DISPL3     ; if not: stop
+        ld (hl),'0'-1   ; we gaan straks 1 te ver door
+DISPL1  inc (hl)
+        sub 10
+        jr nc,DISPL1    ; herhaal tot goede waarde
+        add a,10        ; herstel, we waren te ver.
+DISPL3  add a,'0'
+        ld hl,CIJFER0
+        ld (hl),a       ; cijfer is nu klaar! Nu printen!
+        ld a,(VDPOUT)
+        ld c,a          ; Poortnr. in C
+        ld b,19         ; number of lines to print in B
+DISPL5  push bc
+        ld a,19
+        sub b           ; regelnr. van boven getelt
+        ld d,a
+        ld a,(SCRLIN)
+        add a,d         ; huidige directory entry
+        ld d,a
+        ld a,(CURLIN)   ; huidige regel
+        cp d            ; gelijk?
+        ld a,0          ; neem aan van niet
+        jr nz,DISPL6
+        ld a,128
+DISPL6  ld (CURFLAG),a  ; curflag = 128 voor current line (invert flag)
+        push de         ; d nummer directory entry
+        ld ix,CURFLAG
+        ld a,19+3       ; adress in VRAM uitrekenen
+        sub b
+        ld l,a
+        ld h,0          ; regelnr. op scherm in hl
+        call HL_40X     ; vermenigvuldig met 40
+        inc hl
+        inc hl          ; eerste 2 plaatsen niet gebruiken
+        ld de,(NAMETAB)
+        add hl,de       ; complete adres klaar
+        call SETWRIT
+        ld a,(CIJFER2)
+        or (ix)
+        out (c),a       ; print eerste cijfer (10^2)
+        ld a,(CIJFER1)
+        or (ix)
+        out (c),a       ; print tweede cijfer (10^1)
+        ld a,(CIJFER0)
+        or (ix)
+        out (c),a       ; print derde cijfer (10^0)
+        call VERHOOG    ; tel 1 op bij het nummer.
+        ld a,' '
+        or (ix)
+        out (c),a       ; print spatie
+        pop hl          ; h=nr. directory entry
+        ld l,h
+        ld h,0
+        add hl,hl       ; hl=entry nr. in ARRAY
+        ld de,ARRAY
+        add hl,de
+        push hl
+        pop iy          ; in iy het absolute adres
+        ld a,' '        ; assume not locked
+        bit 0,(iy+1)
+        jr z,DISPL7
+        ld a,'>'        ; wel locked
+DISPL7  or (ix)
+        out (c),a       ; print lock of spatie
+        bit 1,(iy+1)    ; valid?
+        jr nz,DISPL7A
+        ld b,12         ; niet valid: 12 spaties.
+DISPL7B ld a,' '
+        or (ix)
+        out (c),a
+        djnz DISPL7B
+        jr DISPL9A
+DISPL7A ld l,(iy)       ; wel valid: bereken startadres
+        ld h,0
+        call HL_32X
+        ld de,DIRAREA
+        add hl,de       ; absoluut adres
+        ld b,8
+DISPL8  ld a,(hl)       ; print filename (niet ext.)
+        or (ix)
+        inc hl
+        out (c),a
+        djnz DISPL8     ; print eerste 8 letters
+        ld a,'.'
+        or (ix)
+        out (c),a       ; print punt
+        ld b,3
+DISPL9  ld a,(hl)
+        inc hl
+        or (ix)
+        out (c),a
+        djnz DISPL9     ; print extensie
+DISPL9A ld a,' '        ; neem aan niet locked
+        bit 0,(iy+1)
+        jr z,DISPL10
+        ld a,'<'        ; wel locked
+DISPL10 or (ix)
+        out (c),a       ; print lock of spatie
+        ld a,' '
+        pop bc          ; haal teller terug
+        dec b
+        jp nz,DISPL5
+        ei
+        ret
+
+; Routine om het nummer van de current line met 1
+; te verhogen.
+VERHOOG ld hl,CIJFER0   ; eenheden 
+        ld a,(hl)
+        inc a
+        ld (hl),a       ; neem aan dat het goed is
+        cp '9'+1        ; echt niet groter dan '9'?
+        ret c
+        ld (hl),'0'     ; na negen naar 0
+        ld hl,CIJFER1
+        ld a,(hl)
+        inc a           ; verhoog tientallen
+        ld (hl),a
+        cp ' '+1        ; was het een spatie?
+        jr z,VERH1      ; ja? dan wordt het een 1 en klaar
+        cp '9'+1        ; nog niet groter dan 9?
+        ret c
+        ld a,'0'
+        ld (hl),a       ; na 9 weer op 0
+        ld hl,CIJFER2   ; honderdtallen (wordt nooit 200, moet 1 worden)
+VERH1   ld (hl),'1'     ; maak er een 1 van.
+        ret
+
+; Deze routine zet alle valid entry bits uit array
+; naar de zojuist geladen directory. (0 in naam-
+; veld of 229 wil zeggen: niet valid.
+; De routine gaat ervan uit dat de array
+; op volgorde staat. (INSTAR)
+VALID   ld b,112
+VALID1  ld l,b
+        ld h,0
+        add hl,hl
+        ld de,ARRAY
+        add hl,de
+        dec hl          ; hl wijst haar info-byte b
+        push hl         ; bewaar dat adres
+        ld l,b
+        ld h,0
+        dec hl
+        call HL_32X
+        ld de,DIRAREA
+        add hl,de       ; hl wijst naar 1e byte naam
+        ld a,(hl)
+        ld e,a          ; eerste byte in e
+        pop hl          ; haal adres info byte terug
+        ld a,(hl)       ; info byte
+        and %11111101   ; assume niet valid
+        ld (hl),a
+        ld a,e
+        cp 229          ; erased file
+        jr z,VALID2
+        or a            ; nooit gebruikte entry
+        jr z,VALID2
+        set 1,(hl)      ; dus wel valid
+VALID2  djnz VALID1     ; next entry
+        ret
+
+; TRYLOCK zal proberen het current entry lock
+; te 'flippen'. (Unlocken gaat altijd)
+TRYLOCK ld a,(CURLIN)
+        ld l,a
+        ld h,0
+        add hl,hl
+        ld de,ARRAY+1
+        add hl,de       ; hl wijst naar juiste atr. byte
+        ld a,%00000001
+        xor (hl)        ; flip in a
+        ld d,a
+        and %00000011
+        cp %00000001
+        jp z,NENTRY     ; stop als niet valid en niet lock
+        ld (hl),d
+        jp DENTRY
+         
+; UNLOCK haalt alle entry's van hun 'lock' af.
+; (door de bits in ARRAY aan te passen)
+UNLOCK  ld hl,ARRAY+1
+        ld b,112
+UNLOCK1 res 0,(hl)      ; unlock
+        inc hl
+        inc hl
+        djnz UNLOCK1
+        ret
+
+; CLRDIR wist de hele directory, filenamen komen
+; allemaal op nul te staan, dus niet valid, en
+; spaties op het scherm straks.
+CLRDIR  ld hl,DIRAREA
+        ld de,DIRAREA+1
+        ld bc,DIRLEN-1
+        ld (hl),0
+        ldir            ; clear alles
+        call INSTAR
+        call UNLOCK
+        call VALID
+        ret
+
+; INSTAR is de routine die de array installeerd, 
+; dat wil zeggen oplopende waarden in de nummer
+; bytes plaatst.
+INSTAR  ld hl,ARRAY
+        ld b,112
+INSTAR1 ld a,112
+        sub b           ; bereken nummer
+        ld (hl),a
+        inc hl
+        inc hl
+        djnz INSTAR1    ; herhaal 112 entry's
+        ret
+
+; CHKRWL test of RWL nog wel in het programma staat.
+CHKRWL  ld a,.LOW. RWLADR
+        push af
+        ld a,.HIGH. RWLADR
+        push af
+        pop de
+        pop af
+        ld e,a          ; de is nu adres van RWL
+        push de
+        inc de
+        push de
+        inc de
+        push de
+        pop ix
+        pop iy
+        pop hl          ; hl,ix en iy wijzen ieder naar 1 letter
+        xor a
+        xor (ix)
+        xor (hl)
+        xor (iy)
+        cp 'R' .XOR. 'W' .XOR. 'L' .XOR. 128
+        jr nz,WRONG
+        xor a
+        add a,(ix)
+        add a,(iy)
+        add a,(hl)
+        cp .LOW. ('R'+'W'+'L'+128)
+        jr nz,WRONG
+        ret             ; alles was ok.
+WRONG   di              ; maar anders.....
+        jp WRONG
+
+; Waitkey heeft verschillende taken. Eerst wordt er 
+; op een letter gewacht, dan worden en eventueel
+; conversies uitgevoerd, en tot slot wordt de letter
+; in het inmiddels opgeschoven commando-geheugen
+; gezet. Dan keert de routine terug, met de letter in A
+WAITKEY ld a,(LETTER2)
+        ld (LETTER1),a  ; schuif commando letters
+        CALLDOS DIRINP  ; haal 1 letter
+        cp '>'
+        jr nz,WKEY1
+        ld a,'U'
+WKEY1   cp '<'
+        jr nz,WKEY2
+        ld a,'D'
+WKEY2   cp 'a'
+        jr c,WKEY3
+        cp 'z'+1
+        jr nc,WKEY3
+        sub 32          ; maak hoofdletter
+WKEY3   ld (LETTER2),a  ; in commando buffer
+        ret
+
+; CLS doet exact wat er van verwacht mag worden:
+; het scherm wordt in een hoog tempo gewist,
+; dat wil zeggen, gevuld met spaties.
+CLS     ld hl,(NAMETAB)
+        call SETWRIT
+        ld a,(VDPOUT)
+        ld c,a
+        ld de,SCRLEN    ; aantal posities
+        ld b,' '        ; spatie
+CLS1    out (c),b
+        dec de
+        ld a,d
+        or e            ; al nul?
+        jr nz,CLS1
+        ei              ; interupt weer aan
+        ret
+
+; INSLINE probeerd een lege regel toe
+; te voegen op de plaats van de curent line
+
+INSLINE ld b,112
+        ld hl,ARRAY+(112*2)-1
+INSLIN1 bit 1,(hl)      ; valid?
+        jr z,INSLIN2
+        dec hl
+        dec hl
+        djnz INSLIN1    ; zoek eerste niet valid.
+        jp NENTRY       ; niet gevonden (onmogelijk)
+INSLIN2 dec b
+        dec hl
+        dec hl
+        ld a,(CURLIN)
+        sub b           ; vergelijk
+        jp nc,NENTRY
+        neg             ; nr. of ch.
+        ld d,0          ; flag
+        ld b,a
+INSLIN3 bit 1,(hl)
+        jr z,INSLIN4
+        ld d,255        ; set flag als valid entry
+INSLIN4 call SWAPU      ; 1 up
+        dec hl
+        dec hl
+        djnz INSLIN3
+        ld a,d
+        inc a
+        call z,UNLOCK   ; alleen als er een valid entry was.
+        jp DENTRY
+
+; DELLINE probeerd een regel te wissen.
+; dat kan alleen als er niets op staat.
+
+DELLINE ld a,(CURLIN)
+        ld l,a
+        ld h,0
+        add hl,hl
+        ld de,ARRAY+1
+        add hl,de
+        bit 1,(hl)
+        jp nz,NENTRY    ; stop als deze valid
+        push hl
+        call UNLOCK
+        pop hl
+        ld a,(CURLIN)
+        ld b,a
+        ld a,111
+        sub b           ; a= nr. of swaps
+        jp z,DENTRY
+        ld b,a
+DELLIN1 call SWAPU
+        inc hl
+        inc hl
+        djnz DELLIN1
+        jp DENTRY
+
+; reset commando bytes
+
+SETINST xor a           ; a=0
+        ld (LETTER1),a
+        ld (LETTER2),a
+        ret
+
+; COMMAND moet de commando's herkennen en uitvoeren
+
+COMMAND ld a,(LETTER1)
+        cp 'L'
+        jp z,LETTER1L
+        cp 'S'
+        jp z,LETTER1S
+        cp 'E'
+        jp z,LETTER1E
+        cp 'Q'
+        jp z,LETTER1Q
+        cp 'U'
+        jp z,LETTER1U
+        cp 'C'
+        jp z,LETTER1C
+        cp 'N'
+        jp z,LETTER1N
+        or a            ; 0?
+        jp z,NENTRY     ; no action
+WRONGCH CALBIOS BEEP    ; geen geldige beginletter
+        CALBIOS BEEP
+        call SETINST    ; wis instructie bytes
+        ei
+        jp NENTRY
+
+LETTER1L        ; Load Filenames
+        ld a,(LETTER2)
+        cp 'F'
+        jp nz,WRONGCH   ; ongeldige letter
+        jp LOADDIR
+
+LETTER1S        ; Sort Up, Sort Down, Save Filenames
+        ld a,(LETTER2)
+        cp 'U'
+        jp z,SORTU
+        cp 'D'
+        jp z,SORTD
+        cp 'F'
+        jp z,SAVEDIR
+        jp WRONGCH
+
+LETTER1E        ; sort Ext. Up, sort Ext Down
+        ld a,(LETTER2)
+        cp 'U'
+        jp z,SORTEXU
+        cp 'D'
+        jp z,SORTEXD
+        jp WRONGCH
+
+LETTER1Q        ; QUit
+        ld a,(LETTER2)
+        cp 'U'
+        jp z,QUIT
+        jp WRONGCH
+
+LETTER1U        ; UnLock
+        ld a,(LETTER2)
+        cp 'L'
+        jp z,MUNLOCK
+        jp WRONGCH
+
+LETTER1C        ; CoLumns
+        ld a,(LETTER2)
+        cp 'L'
+        jp z,MCOLUMN
+        jp WRONGCH
+
+LETTER1N        ; all Names Up
+        ld a,(LETTER2)
+        cp 'U'
+        jp z,NAMESUP            
+        jp WRONGCH
+
+; Deze routine probeerd een directory te schrijven naar
+; disk. Er wordt wel eerst gekeken of dat wel kan (mag)
+SAVEDIR call SETINST    ; eerst huidige dir. veilig stellen
+        MOVE DIRLEN,DIRAREA,DIRSAVE
+        call GETDIR     ; lees eerst deze directory
+        jr c,SERROR     ; error: herstel oude dir.
+        ld bc,DIRLEN    ; aantal te vergelijken bytes
+        ld de,DIRSAVE   ; (vergelijk ingelezen dir.
+        ld hl,DIRLOAD   ; met oude, moet gelijk zijn!)
+SAVED2  ld a,(de)
+        cp (hl)
+        jp nz,SERROR    ; ongelijk? ERROR
+        dec bc
+        inc hl
+        inc de          ; update counters
+        ld a,b
+        or c            ; al klaar?
+        jp nz,SAVED2    ; herhaal voor alle bytes
+        ld b,112
+        ld de,DIRAREA   ; maak nu nieuwe volgorde in DIRAREA
+SAVED1  push bc
+        ld a,112
+        sub b           ; bereken entry nr.
+        ld c,a
+        ld b,0          ; in BC
+        ld hl,ARRAY
+        add hl,bc
+        add hl,bc       ; welke oude op die plek?
+        ld l,(hl)
+        ld h,0          ; nummer in hl
+        call HL_32X     ; vermenigvuldig met 32
+        ld bc,DIRLOAD
+        add hl,bc       ; optellen bij basis
+        ld bc,32        ; lengte entry
+        ldir
+        pop bc
+        djnz SAVED1     ; herhaal voor 112 entry's
+        call BYTES1     ; lost 1e byte 'problemen' op
+        call PUTDIR
+        jp nc,SAVED3    ; geen error
+        MOVE DIRLEN,DIRLOAD,DIRAREA
+        call PUTDIR     ; probeer anders nog zoveel mogelijk
+        jp SERROR       ; de oude dir. te SAVEn.
+SAVED3  call UNLOCK     ; alles OK, dir. gesaved
+        call INSTAR     ; (deze is nodig, volgorde
+        call VALID      ; is nu echt veranderd!)
+        call HOMESUB
+        ei
+        jp DENTRY
+
+SERROR  CALBIOS BEEP    ; 4x BEEP en haal oude dir. terug.
+        CALBIOS BEEP
+        CALBIOS BEEP
+        CALBIOS BEEP
+        MOVE DIRLEN,DIRSAVE,DIRAREA
+        ei
+        jp NENTRY
+
+; PUTDIR probeerd een directory weg te schrijven uit
+; load gebied. Carry set on error.
+; eerste sectornr. in DIRSEC. (woord)
+; disk type in DSKTYP.
+PUTDIR  ld a,(DSKTYP)
+        ld c,a          ; echte disk ID
+        ld hl,DIRAREA
+        ld de,(DIRSEC)
+        ld b,7          ; 7 sectoren te schrijven
+        ld a,(DEFAULT)
+        scf             ; carry set (write)
+        CALBIOS DISKIO
+        ret
+        
+; deze routine loopt alle entry's in DIRAREA langs,
+; alle open plaatsen 'tussen' valid entry's worden
+; gewiste files gemaakt, alle eventueel zo behandelde 
+; entry's daarachter worden weer gewoon op '0' gezet.
+BYTES1  ld b,112
+        ld de,32
+        ld hl,DIRAREA+DIRLEN-32
+BYTE1   ld a,(hl)
+        or a            ; clear carry
+        sbc hl,de       ; een entry terug
+        or a            ; zet zero flag weer
+        jr z,BYTE2      ; nooit gebruikte entry: Ok.
+        cp 229
+        jr nz,BYTE3     ; echte entry: andere loop
+        push hl
+        push bc
+        xor a           ; a=0
+        ld b,10
+BYTE4   inc hl
+        or (hl)         ; bereken in A de exclusive OR
+        djnz BYTE4      ; van de andere bytes van de naam 
+        pop bc
+        pop hl
+        or a            ; a nog 0?
+        jp nz,BYTE2     ; nee? echt gewiste entry
+        ld (hl),0       ; maak weer nooit gebruikt
+BYTE2   djnz BYTE1      ; loop ze allemaal af
+        ret
+
+BYTE3   dec b
+BYTE5   ld a,(hl)
+        or a            ; nooit gebruikte entry?
+        jr nz,BYTE6
+        ld (hl),229     ; maak nooit gebruikt
+BYTE6   sbc hl,de       ; carry was al 0
+        djnz BYTE5
+        ret
+
+
+; Deze routine probeerd een directory te laden.
+; Als dat goed gaat wordt de directory getoond,
+; anders wordt de huidige dir. gewist en klinkt
+; een dubbele beep.
+LOADDIR call SETINST    ; clear instructie code bytes
+        call GETDIR     ; haal in LOAD gebied
+        jp c,LERROR     ; als fout: naar error
+        MOVE DIRLEN,DIRLOAD,DIRAREA
+        call INSTAR
+        call UNLOCK     ; reset array
+        call VALID
+        call HOMESUB
+        jp DENTRY
+
+LERROR  CALBIOS BEEP    ; er is een echte load-fout
+        CALBIOS BEEP    ; gevonden, 4 beeps alarm.
+        CALBIOS BEEP
+        CALBIOS BEEP
+        ei              ; (stonden uit door interslot call)
+        jp NENTRY
+
+; GETDIR probeerd een directory in te laden in het
+; dirload gebied. Carry set on error.
+GETDIR  ld a,(DEFAULT)
+        ld hl,SECTOR    ; opslag adres
+        ld de,0         ; sectornummer
+        ld b,1          ; 1 sector lezen
+        ld c,#F8        ; waarschijnlijk disk ID
+        or a            ; reset carry (=lezen)
+        CALBIOS DISKIO
+        ret c           ; terug als error
+        ld a,(SECTOR+#15)
+        ld (DSKTYP),a   ; onthou voor save
+        ld c,a          ; echte disk ID
+        ld de,3         ; neem aan ID = FA
+        cp #FA
+        jr z,READDIR    ; goed? start lezen
+        inc de
+        inc de          ; de=5
+        cp #FB
+        jr z,READDIR    ; goed? start lezen
+        cp #F8
+        jr z,READDIR    ; goed? start lezen
+        inc de
+        inc de          ; dan ID=F9, sector 7
+        cp #FC
+        scf             ; neem aan error
+        ret z           ; (64-entry directory)
+        cp #FE
+        scf
+        ret z
+READDIR ld (DIRSEC),de  ; bewaar voor save
+        ld hl,DIRLOAD
+        ld b,7          ; 7 sectoren te lezen
+        ld a,(DEFAULT)
+        or a            ; carry reset (lezen)
+        CALBIOS DISKIO
+        ret             ; ret: carry al dan niet gezet
+        
+
+SORTU   ld hl,COMPU
+        ld (ROUTINE),hl
+        jp BUBBLE
+
+SORTD   ld hl,COMPD
+        ld (ROUTINE),hl
+        jp BUBBLE
+
+SORTEXU ld hl,COMPEU
+        ld (ROUTINE),hl
+        jp BUBBLE
+
+SORTEXD ld hl,COMPED
+        ld (ROUTINE),hl
+        jp BUBBLE
+
+; Deze routine schuift de namen allemaal omhoog
+NAMESUP call SETINST
+        call UNLOCK     ; ALL names up
+        ld b,111        ; 112 entry's te gaan
+        ld hl,ARRAY+1   ; eerste info byte
+NAMES1  push bc         ; save teller
+        bit 1,(hl)      ; valid?
+        jr nz,NAMES3    ; if so: next
+        push hl         ; else save pointer
+        ;dec b          ; aantal entry's op te schuiven
+NAMES2  call SWAPU
+        inc hl
+        inc hl
+        djnz NAMES2     ; schuif op operatie 
+        pop hl          ; haal oude pointer weer terug
+        dec hl
+        dec hl          ; blijf bij dezelfde
+NAMES3  inc hl
+        inc hl          ; volgende entry
+        pop bc          ; haal teller
+        djnz NAMES1
+        jp DENTRY
+
+MUNLOCK call SETINST
+        call UNLOCK
+        jp DENTRY
+
+MCOLUMN call SETINST
+        call UNLOCK
+        MOVE ARLEN,ARRAY,ARRAY2
+        ld hl,ARRAY+ARLEN-1
+        ld b,112
+MCOL1   bit 1,(hl)      ; valid?
+        jr nz,MCOL2     ; gevonden!
+        dec hl
+        dec hl
+        djnz MCOL1
+        jp DENTRY       ; geen valid entry gevonden
+MCOL2   ld d,0
+        ld a,(COLUMNS)
+        ld e,a
+        ld a,b          ; aantal te reorganiseren entry's
+MCOL3   inc d
+        sub e
+        jr nc,MCOL3     ; deel door  
+        add a,e         ; herstel
+        ld e,a          ; int+1 in D, mod in E
+        ld ix,ARRAY2    ; volg entry's sequentieel
+        ld a,(COLUMNS)
+        ld b,a
+MCOL4   push bc         ; voor alle kolommen
+        ld a,(COLUMNS)
+        sub b
+        ld l,a
+        ld h,0          ; kolom nr.
+        add hl,hl
+        ld bc,ARRAY
+        add hl,bc
+        push hl
+        pop iy          ; iy adres 1e
+        dec de          ; bepaal lengte in d
+        push de
+        ld b,d
+        dec d
+        inc d           ; nu al 0?
+        jr z,MCOL6
+        ld hl,(COLUMNS)
+        ld h,0
+        add hl,hl
+        ex de,hl        ; de=step iy
+MCOL5   ld a,(ix)
+        ld (iy),a
+        ld a,(ix+1)
+        ld (iy+1),a
+        inc ix
+        inc ix
+        add iy,de
+        djnz MCOL5      ; maak kolom af
+MCOL6   pop de
+        pop bc
+        djnz MCOL4
+        jp DENTRY
+
+
+
+NEWFKEY defb 'SF'
+        defs 14,0       ; 14 bytes 0
+        defb 'LF'
+        defs 14,0
+        defb 'SD'
+        defs 14,0
+        defb 'SU'
+        defs 14,0
+        defb 'ED'
+        defs 14,0
+        defb 'EU'
+        defs 14,0
+        defb 'NU'
+        defs 14,0
+        defb 'CL'
+        defs 14,0
+        defb 'UL'
+        defs 14,0
+        defb 'QU'
+        defs 14,0
+
+        if .NOT.(CHECKSM=0)
+CHECK    ld b,112
+         ld de,0
+         ld hl,ARRAY
+CHECK1   ld a,e
+         xor (hl)
+         ld e,a
+         ld a,d
+         add a,(hl)
+         ld d,a
+         inc hl
+         inc hl
+         djnz CHECK1
+         push de
+         ld hl,(NAMETAB)
+         ld de,42
+         add hl,de
+         call SETWRIT
+         pop de
+         ld a,(VDPOUT)
+         ld c,a
+         ld a,e
+         xor 'A'
+         out (c),a
+         ld a,d
+         sub 72
+         add a,'A'
+         out (c),a
+         ei
+         ret
+        endc
+
+; LET OP: De HELP tekst mag niet gewijzigt worden,
+; Er staat een XOR en een ADD checksum voor de HELP-routine
+; Als die twee niet kloppen werkt ESC gewoon niet!
+HELPDAT defb " Twee-letter commando's/functietoetsen:",0
+        defb '  SF/F1  Bewaar bestandsnamen',0
+        defb '  LF/F2  Laad bestandsnamen',0
+        defb '  SD/F3  Sorteer aflopend',0
+        defb '  SU/F4  Sorteer oplopend',0
+        defb '  ED/F5  Sorteer op extensie aflopend',0
+        defb '  EU/F6  Sorteer op extensie oplopend',0
+        defb '  NU/F7  Schuif alle namen omhoog',0 
+        defb '  CL/F8  Maak kolommen (zie onder: 2-9)',0
+        defb "  UL/F9  Haalt alle '>  <' weg",0
+        defb '  QU/F10 Quit, stop DSORT'
+        defb 0
+        defb " Een-toets commando's:",0
+        defb '  INS/RET    invoegen lege regel',0
+        defb '  DEL/BS     wissen LEGE regel',0
+        defb "  SPATIE     vastzetten naam met '>  <'",0
+        defb '  CURSOR     pagina/regel verder/terug',0
+        defb '  HOME       naar begin van de lijst',0
+        defb '  ESC        naar deze help pagina',0
+        defb '  2-9        instellen aantal kolommen',0
+        defb '  CTRL-STOP  start DSORT opnieuw',0
+        defb '  SHIFT-HOME drukt scherm opnieuw af',0
+        defb 0
+        defb '                   Druk op een toets...',0
+        defb 0
+
+
+; ARRAY is een geheugengebied van 112 woorden, dat
+; gebruikt wordt om de huidige directory volgorde 
+; op te slaan meet eventuele info over locked, en
+; valid entry. De tweede byte bevat de info:
+; bit 0: 0=niet locked, 1=locked
+; bit 1: 0=niet valid, 1=valid entry
+ARRAY   ; array met pointers naar directory entry's
+
+ARRAY2  equ ARRAY+ARLEN+10      ; tweede array vor columns routine
+
+SAVFKEY equ ARRAY2+ARLEN+10     ; bewaar oude functie toetsen
+
+TEMPINI equ SAVFKEY+FKEYLEN+10  ; tijdelijke opslag voor initialisatie
+        if .NOT.(VERSION=0)
+DIRDATA  equ #4000      ; voor DOS versie
+        else
+DIRDATA  equ #9000      ; voor BLOAD versie
+        endc
+DIRAREA equ DIRDATA             ; opslag werk directory
+DIRLOAD equ DIRAREA+DIRLEN+10   ; directory die nu geladen wordt
+DIRSAVE equ DIRLOAD+DIRLEN+10   
+SECTOR  equ DIRSAVE+DIRLEN+10   ; sector om disk type te bepalen
+
+EIND
+
+d

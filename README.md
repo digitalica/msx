@@ -6,8 +6,10 @@ Veel ervan zijn gepubliceerd in
 ## Software
 
 - [dsort](./dsort/README.md)
+- [joysor](./joysor/README.md)
 - [koppie](./koppie/README.md)
-- tracer (helaas geen source)
+- [mousor](./joysor/README.md)
+- [tracer](./tracer/README.md)
 
 
 ## Compiler
