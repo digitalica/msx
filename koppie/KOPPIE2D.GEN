@@ -1,0 +1,879 @@
+
+; Dit is het geheime GEN file van Koppie2d.
+
+; versie voor 2 drives: <<<< KOPPIE2D >>>>
+; versie 1.1: test of er wel twee logische drives zijn
+; versie 1.1: (nieuwe versie, andere coder, zelfde nr.) 
+
+CODING	equ 1		; coder flag. (0=nee, 1=ja)
+; if coding: the first time the prog. is BLOADed the text
+; will be coded, and the new start/end adresses will be
+; placed at 8010 and 8012. So just read them, and BSAVE
+; the final version.
+
+CHARGEN	equ #0004	; pointer to character generator
+CLRBUF	equ #0156	; clear keyboard buffer
+CHCKBUF	equ #009C	; checks buffer status, set Z if any chars
+GETCHAR	equ #009F	; reads character from buffer
+BEEP	equ #00C0	; sounds the buzzer
+CTRL	equ #00B7	; checks for CTRL-STOP (sets Cy if pressed)
+SETWRT	equ #0171	; set VDP for write
+SETRED	equ #016E	; set VDP for read
+FRMVRAM	equ #0059	; from VRAM to RAM
+FILVRAM	equ #016B	; fills VRAM whith data in A	
+CHAMODE	equ #005F	; put screen in mode [A]
+DPPAGE	equ #FAF5	; Display page VRAM
+ACPAGE	equ #FAF6	; Acces page VRAM
+SETPAGE	equ #013D	; Set VRAM pages acording to ACPAGE & DPPAGE
+CLOCK	equ #FCA2	; adress interrupt counter
+DOSENT	equ #F37D	; MSXDOS System call entry
+DSKIO	equ #0144	; performs disk i/o
+VPOKE	equ #0177	; A --> (HL) VRAM
+ERRHAND	equ #F323	; adress of pointer to error handler
+BASIC	equ #409B	; BASIC entry in main ROM
+BASROM	equ #FCC1	; pointer to slot adress of main ROM
+ENASLOT	equ #0024	; enable slot routine
+DATADR	equ #B000	; adress for 3Kb data blocks
+LOGOPR	equ #FB02	; logical operator for screen acces
+GXPOS	equ #FCB7	; graphic X
+GYPOS	equ #FCB9	; graphic Y
+GRPPRT	equ #008D	; print char on graphic scr.
+FCOLOR	equ #F3E9	; foreground color
+BCOLOR	equ #F3EA	; background color
+WRTVDP	equ #0047	; writes to VDP register
+LOGDRV	equ #0018	; get login vector in HL
+
+DECODE	macro
+	xor h
+	add a,#D1
+	xor 12
+	add a,l
+	endm
+
+CODE	macro
+	sub l
+	xor 12
+	sub #D1
+	xor h
+	endm
+	
+	  defb #FE
+	  defw FIRSTML
+	if CODING
+	  defw THEEND2	; end of coder routine
+	  defw THEEND	; start adress coder routine
+	else	
+	  defw THEEND	; end of normal ML
+	  defw FIRSTML	; start adress real ml
+	endc
+
+	org #9100
+
+FIRSTML	ld hl,ERRORP	; to handle the errors
+	ld de,(ERRHAND)
+	ld (STORERR),de
+	ld (ERRHAND),hl
+	ld (STACKP),sp
+	call GETMOPN	; get random mop
+	ld a,(FCOLOR)
+	ld (OCOLOR),a	; store old colors
+	ld a,(BCOLOR)
+	ld (PCOLOR),a
+	xor a
+	ld (BCOLOR),a
+
+START	call CLRBUF	; to clear keyboard buffer
+	ld sp,#90F0
+	ld hl,0
+	ld a,(BASROM)
+	call ENASLOT	; enable BIOS
+	ld hl,#4000
+	ld a,(BASROM)
+	call ENASLOT	; enable BASIC main ROM
+	ld a,8
+	call CHAMODE	; initialise screen mode 8
+	ld c,7
+	ld b,0
+	call WRTVDP	; set border color 0
+	ld a,0
+	ld (DPPAGE),a
+	ld (ACPAGE),a
+	call SETPAGE	; initialise VRAM pages at 0,0
+	di
+	in a,(#FF)
+	push af
+	ld a,2
+	out (#FF),a	; MM is now initialised, page 0 is
+	ld de,#C000	; used by this program and the System
+	ld hl,NORESET
+	ld bc,NORESLN	; This is the installation of the
+	ldir		; reset protection. After a reset
+	pop af		; this program will restart, and
+	out (#FF),a	; display a new opening text.
+	ei
+	ld hl,0
+	call SETWRT	; start writing from adress 0
+	ld a,(7)
+	ld c,a		; C=VRAM I/O port
+	ld a,(CLOCK)
+	ld d,a
+	ld b,44		; 44 lines to go
+SCLOOP1	push bc
+	ld b,0		; 256 dots to go
+SCLOOP2	out (c),d
+	inc d
+	djnz SCLOOP2
+	dec d		; lines not vertical
+	dec d
+	pop bc
+	djnz SCLOOP1	; next line-nice picture initialised
+	ld b,8		; for 8 lines of first black box
+	ld hl,2086
+ILOOP1	push bc
+	push hl
+	call BLCKLIN	; draw line
+	pop hl
+	pop bc
+	inc h
+	djnz ILOOP1
+
+	ld b,8		; for 8 lines of second black box
+	ld hl,7206
+ILOOP2	push bc
+	push hl
+	call BLCKLIN	; draw line
+	pop hl
+	pop bc
+	inc h
+	djnz ILOOP2
+	call KILLMOP	; make the rest black
+
+MSXDOS	macro @CALL
+	ld c,@CALL
+	call DOSENT
+	endm
+
+
+; fake trick to make disassembling more difficult
+
+	ld h,(.HIGH. TRICK1)+1
+	ld l,(.LOW. TRICK1)-1
+	dec h
+	inc l
+	jp (hl)
+TRICK1
+
+
+	MSXDOS LOGDRV	; get nr. of LOGICAL drives
+	ld a,l
+	dec a		; if only 1 drive, a=0
+	jr nz, MORET1
+	ld hl,ONLY1D
+	call MESSAGE
+	jp EXIT		; no action can be taken anyway
+
+ONLY1D	defm '    ----    Er is maar 1 logische drive, start zonder CTRL'
+	defm '    ----    Only 1 logical drive found, reset whithout CTRL'
+	defb 0
+
+
+MORET1	ld e,0
+	MSXDOS #2E	; reset verify flag
+	call OPENTXT
+	call GETCHAR
+COMPARE	cp #1B		; ESC-key pressed?
+	jp z,EXIT	; if so: exit (kill program first)
+
+	call DISPMOP	; show a mop
+	ld h,.HIGH. (RWLCTRL-1)	; doule load hl
+	ld l,.LOW. (RWLCTRL-1)
+	push hl
+	pop ix
+	ld a,(ix)
+	dec hl
+	xor (hl)
+	xor (ix-2)	; calculate xor of R W and L (fakes)
+	cp 73		; the right value
+	jp nz,EXIT	; that's simple
+
+; Hier komt het nieuwe 2D kopieer gedeelte
+
+KOPPIE	ld b,8		; for 8 lines of second black box
+	ld hl,7206	; (contains the copy-bar)
+ILOOP22	push bc
+	push hl
+	call BLCKLIN	; draw line
+	pop hl
+	pop bc
+	inc h
+	djnz ILOOP22
+
+	ld a,#F8	; media descriptor SS disk
+	ld (MEDDES),a
+
+SOURA	call SOURDSK	; ask for source disk in A
+	ld b,1		; 1 sector
+	ld a,(MEDDES)	;
+	ld c,a
+	ld de,0
+	ld hl,DATADR
+	xor a
+	call DSKIO
+	jr c,SOURA	; on error, ask again.
+
+	ld a,(DATADR+#15)
+	ld (MEDDES),a	; get real media descriptor byte
+	and %00000001
+	inc a
+	ld (SIDES),a	; set number of sides
+
+DESTB	call DESTDSK	; ask for destination disk in B
+	ld b,1
+	ld a,(MEDDES)
+	ld c,a
+	ld de,0
+	ld hl,DATADR
+	xor a
+	inc a
+	call DSKIO
+	jr c,DESTB	; ask again at read failure
+	ld b,1
+	ld a,(MEDDES)
+	ld c,a
+	ld de,0
+	ld hl,DATADR
+	ld a,1
+	scf		; now try write
+	call DSKIO
+	jr c,DESTB	; ask again at write failure
+
+	ld hl,0
+	ld (SECTOR),hl
+
+BLOCK1	ld de,7206
+	ld (BARPNT),de
+	call COPY180
+
+	ld a,(SIDES)
+	dec a
+	jr z,BLOCK3
+BLOCK2	ld de,7718
+	ld (BARPNT),de
+	call COPY180
+
+BLOCK3	ld de,8230
+	ld (BARPNT),de
+	call COPY180
+
+	ld a,(SIDES)
+	dec a
+	jr z,FINISH
+BLOCK4	ld de,8742
+	ld (BARPNT),de
+	call COPY180
+
+
+FINISH	ld hl,FINTEXT
+	call MESSAGE
+	call GETMOPN
+	call DISPMOP
+	jp KOPPIE
+
+
+FINTEXT	defm '    ----    Deze disk is nu gecopieerd.'
+	defm '    ----    This disc is copied now.'
+	defb 0
+
+PCOLOR	defb 0		; store old background color
+
+SAVE3K	ld b,6		; 6 sectoren
+	ld a,(MEDDES)
+	ld c,a
+	ld de,(SECTOR)
+	ld hl,DATADR
+	ld a,1
+	scf		; carry set for write
+	call DSKIO
+	jr nc,SAVEUD
+	cp 3
+	jr nc,SAVEUD
+	call BEEP
+	call CTRL	; check for CTRL-STOP
+	jp c,START
+	jr SAVE3K
+SAVEUD	call CTRL
+	jp c,START
+	ld hl,(SECTOR)	; update sector nr
+	inc hl
+	inc hl
+	inc hl
+	inc hl
+	inc hl
+	inc hl
+	ld (SECTOR),hl
+	ret
+
+COLOR	defb 0		; to store color of BAR
+
+LOAD3K	xor a		; color white code
+	dec a
+	ld (COLOR),a
+	ld b,6		; 6 sectoren
+	ld a,(MEDDES)
+	ld c,a
+	ld de,(SECTOR)
+	ld hl,DATADR
+	xor a		; carry and A reset
+	call DSKIO
+	jr nc,LOADUD2
+	cp 3
+	jr nc,LOADUD1
+	call BEEP
+	call CTRL	; check for CTRL-STOP
+	jp c,START
+	jr LOAD3K
+LOADUD1	ld a,28		; code for color red
+	ld (COLOR),a
+LOADUD2	call CTRL
+	jp c,START
+	call ADDDOT
+	ret
+
+	defm 'Greetings from RWL!'; Dummy, not checked
+
+ADDDOT	ld de,(BARPNT)	; get BARPOINTER
+	ld hl,3
+	add hl,de
+	ld (BARPNT),hl	; BARPOINTER increased
+	ex de,hl
+ADDDOT2	ld a,(COLOR)	; read color (white or red)
+	ld d,a		; keep color in D
+	call VPOKE
+	ld a,d
+	inc l		; one dot right
+	call VPOKE
+	ld a,d
+	inc l		; one dot right
+	call VPOKE
+	ld a,d
+	inc h		; one dot down
+	call VPOKE
+	ld a,d
+	dec l		; one dot left
+	call VPOKE
+	ld a,d
+	dec l		; one dot left
+	call VPOKE
+	ld a,(SIDES)
+	dec a
+	ret nz		; return if DS
+	ld a,2
+	ld (SIDES),a	; immitate DS
+	inc h		; one dot down
+	call ADDDOT2
+	ld a,1		; it was SS
+	ld (SIDES),a
+	ret
+
+
+OPENTXT	ld hl,OPENING
+	call MESSAGE
+	ret
+
+OPENING	defm '                              '
+	defm 'COPY2D is een disk-koppie, sorry '
+	defm 'KOPPIE2D is een disk-copy programma,  '
+	defm 'de dubbel-drive opvolger van "KOPPIE" '
+	defm 'Het zal werken op alle MSX2 computers met '
+	defm '2 diskdrives. KOPPIE2D '
+	defm 'zal zijn koppie (hier dus CPU) gebruiken '
+	defm 'om zo goed mogelijk te copieeren. Als er '
+	defm 'bij het lezen of schrijven iets echt fout '
+	defm 'gaat (DISK OFFLINE of WRITE PROTECTED) '
+	defm 'zal KOPPIE2D een "beep" geven en het nog '
+	defm 'eens proberen tot het lukt. Als er iets anders '
+	defm 'fout gaat bij het lezen kunt U dat zien aan een '
+	defm 'rood blokje in de balk. Als er een tekst '
+	defm 'voorbijschuift zoals nu kunt U met elke toets '
+	defm 'het programma door laten gaan. Met CTRL-STOP '
+	defm '(soms even ingedrukt houden) '
+	defm 'kunt U altijd weer terug naar het begin van dit '
+	defm 'programma. Met ESC kunt U daarna (als deze tekst '
+	defm 'te lezen is) terug naar BASIC. KOPPIE2D is dan '
+	defm 'gewist. KOPPIE2D is geschreven door RWL in '
+	defm 'juni 1988. Ik hoop dat dit programma in een '
+	defm 'behoefte voorziet. Natuurlijk is KOPPIE2D niet '
+	defm 'bedoeld voor illegaal copieeren. Versie 1.1 test '
+	defm 'eerst of er wel 2 logische drives zijn. Tot slot nog '
+	defm 'even dit: Ik wens alle mensen die van plan zijn '
+	defm 'dit programma "aan te passen" erg veel succes. '
+	defm 'Dat zullen ze namelijk nodig hebben. Van KOPPIE '
+	defm '(voor 1 drive) heb ik ook nog geen afwijkende '
+	defm 'versie(s) gezien......... Een '
+	defm 'simpele monitor is nog steeds niet genoeg (HA, HA, HA!) '
+	defm '   MAZZEL,  R W L.'
+	defb 0
+
+COPY180	ld b,60		; 60 keer herhalen
+LOOP180	push bc
+	call LOAD3K
+	call SAVE3K
+	pop bc
+	djnz LOOP180
+	ret
+
+RESTEXT	defm '                              '
+	defm 'Ik wou in ieder geval nog even kwijt: '
+	defm 'Leuk geprobeerd! Maar een simpele '
+	defm 'reset werkt ook nu nog niet. Probeer eens '
+	defm 'de AAN/UIT schakelaar (POWER SWITCH) '
+	defm 'of ESC.............'
+	defb 0
+
+; This is the routine to print a mop,
+; in the middle of the screen.
+DISPMOP	ld b,8		; for 8 lines of first black box
+	ld hl,2086
+ILOOP11	push bc
+	push hl
+	call BLCKLIN	; draw line
+	pop hl
+	pop bc
+	inc h
+	djnz ILOOP11
+
+	call KILLMOP	; erase old mop
+	ld a,255
+	ld (FCOLOR),a
+	ld a,(MOPNUM)
+	ld b,0
+	ld c,a
+	ld hl,MOPPEN
+	add hl,bc
+	add hl,bc
+	ld c,(hl)
+	inc hl
+	ld b,(hl)
+	push bc
+	push bc
+	pop hl	; adress op mop text
+	ld b,1	; line counter
+DMLOOP1	ld a,(hl)
+	if CODING
+	DECODE
+	endc
+	cp 13
+	jp nz,DMOVER1
+	inc b
+DMOVER1	inc hl
+	cp 0
+	jp nz,DMLOOP1
+	ld a,b
+	add a,a
+	add a,a
+	add a,a
+	xor 127	; 128-a
+	ld l,a
+	ld h,0
+	ld (GYPOS),hl
+	ld hl,LOGOPR
+	ld (hl),0; just print the text
+	pop hl
+DMLINE1	call MOPLINE
+	jr nz,DMLINE1
+	ret
+
+
+BARPNT	defw 0		; to point to end of bar adress
+
+MOPLINE	push hl
+	ld b,0
+MLLOOP1	ld a,(hl)
+	if CODING
+	DECODE
+	endc
+	cp 0
+	jr z,MLOVER1
+	cp 13
+	jr z,MLOVER1
+	inc b
+	inc hl
+	jp MLLOOP1
+MLOVER1	ld a,b
+	add a,a
+	add a,a
+	xor 127	; 128-a
+	ld l,a
+	ld h,0
+	ld (GXPOS),hl
+	pop hl
+MLLOOP2	ld a,(hl)
+	if CODING
+	DECODE
+	endc
+	cp 0
+	jr z,MLOVER2
+	cp 13
+	jr z,MLOVER2
+	call GRPPRT
+	inc hl
+	jp MLLOOP2
+MLOVER2	push hl
+	ld hl,(GYPOS)
+	ld de,16
+	add hl,de
+	ld (GYPOS),hl
+	pop hl
+	ld a,(hl)
+	if CODING
+	DECODE
+	endc
+	inc hl
+	or a		; zero set if end
+	ret
+
+
+
+
+SECTOR	defw 0		; to store current sector
+
+DESTDSK	ld hl,DESTTXT
+	call MESSAGE
+	jp CLRTEXT
+
+DESTTXT	defm '    ----    Steek nu de copie-schijf in drive B  A.U.B.'
+	defm '    ----    Please insert destination disk now.'
+	defb 0
+
+LINE	macro @NR	; this macro send line N to screen
+	push hl
+	ld hl,256*@NR+2086
+	call SETWRT
+	pop hl
+	ld b,180
+	otir
+	endm
+
+CLRTEXT	ld hl,COPYTXT
+	call INITLIN
+	ld hl,STARTLIN
+	LINE 0
+	LINE 1
+	LINE 2
+	LINE 3
+	LINE 4
+	LINE 5
+	LINE 6
+	LINE 7
+	ret
+
+COPYTXT	defm '(3K N/E) KOPPIE2D 1.1 by R W L'
+	defb 0
+	
+SOURDSK	ld hl,SOURTXT
+	call MESSAGE
+	jp CLRTEXT
+
+SOURTXT	defm '    ----    Steek nu de orginele schijf in drive A  A.U.B.'
+	defm '    ----    Please insert source disk now.'
+	defb 0
+
+ 
+BLCKLIN	ld bc,180	; 180 dots
+	xor a		; color black
+	jp FILVRAM	; fill and return
+
+SIDES	defb 0		; to store number of sides
+MEDDES	defb 0		; to store media descriptor
+
+
+; This routine starts displaying a scrolling message
+; on the top line of screen 8. Is assumes screen 8
+; is already invoked. It needs a textpointer in HL.
+; The text is terminated by a NUL.
+
+MESSAGE	ei		; to stop drive
+	ld a,0
+	ld (ACPAGE),a
+	call SETPAGE
+	ld (SAVEP),hl
+	call INITLIN
+	ld (TEXTP1),hl
+	ld a,6		; a=0
+	ld (TEXTP2),a
+	call CLRBUF
+	call BEEP
+LOOPMS	ld hl,STARTLIN
+	ld a,(7)	; VRAM write port
+	ld c,a
+	LINE 0		; write text to VRAM
+	LINE 1
+	LINE 2
+	LINE 3
+	LINE 4
+	LINE 5
+	LINE 6
+	LINE 7
+	call CHCKBUF	; is a key pressed?
+	jr nz,OVERMS	; if so: return
+	call SCROLL
+	jr LOOPMS
+OVERMS	di		; to make programm a little faster
+	call CTRL
+	jp c,START	; if CTRL-STOP then reset programm
+	ret		; return (to basc)
+
+MASKTAB	defb %00000100	; mask table, to selct one
+	defb %00001000	; column from character font
+	defb %00010000
+	defb %00100000
+	defb %01000000
+	defb %10000000
+	defb %00000001	; (not usefull these bytes)
+	defb %00000010
+
+GETMOPN	ld a,(CLOCK)
+	and %00011111
+	ld (MOPNUM),a
+	ret
+
+SAVEP	defw 0		; to store text start
+TEXTP1	defw 0		; to store current text pointer
+TEXTP2	defb 0		; to store current column pointer
+
+INITLIN	ld ix,STARTLIN
+	ld b,30		; 30 characters
+LOOPIN1	push bc
+	ld b,6		; 6 columns/character
+LOOPIN2	push bc
+	push hl
+	call MAKECOL	; build one column
+	pop hl
+	pop bc
+	inc ix
+	djnz LOOPIN2	; next column
+	inc hl		; get next char
+	ld a,(hl)
+	if CODING
+	DECODE
+	endc
+	or a
+	jr nz,OVERIN	; text finished ?
+	ld hl,(SAVEP)
+OVERIN	pop bc
+	djnz LOOPIN1	; next char.
+	dec ix		; ix points to last column
+	ret
+
+SCROLL	ld hl,STARTLIN+1
+	ld de,STARTLIN
+	ld bc,8*256
+	ldir		; actual scroll operation
+	ld hl,(TEXTP1)
+	ld a,(TEXTP2)
+	ld b,a
+	push hl
+	push bc
+	call MAKECOL	; write another column
+	pop bc
+	pop hl
+	djnz OVERSC1	; adjust b and check
+	ld b,6
+	inc hl		; text pointer has to be adjusted
+	ld a,(hl)
+	if CODING
+	DECODE
+	endc
+	or a		; end of text?
+	jr nz,OVERSC1
+	ld hl,(SAVEP)
+OVERSC1	ld (TEXTP1),hl	; store text pointers
+	ld a,b
+	ld (TEXTP2),a
+	ret		; return to caller
+
+	defb 0
+	defm 'KOPPIE2D 1.1 was written by RWL'
+RWLCTRL	defm ' too, only some time later'
+	defb 0 ; **************************** fake text
+
+; This routine will write one column to adress ix, ix+256 ....
+; it uses the text pointer in HL and B (column) which
+; is in the range 1-8
+
+
+MAKECOL	push ix
+	dec b		; to range 0-7
+	ld a,(hl)	; character
+	if CODING
+	DECODE
+	endc
+	ld l,a
+	ld de,(CHARGEN)
+	ld h,0		; code of character in HL
+	add hl,hl	
+	add hl,hl
+	add hl,hl	; code * 8
+	add hl,de	; adress of character font
+	ex de,hl	; in DE
+	ld hl,MASKTAB	; table of masks
+	ld c,b
+	ld b,0		; BC = mask number
+	add hl,bc	; HL points to mask
+	ld c,(hl)	; mask in C
+	ex de,hl	; hl=adress of character font
+	ld de,180	; DE=one dot down
+	ld b,8		; repeat for each line
+LOOPMC	ld (ix),0	; clear dot
+	ld a,(hl)
+	and c	
+	jr z,OVERMC	; is dot a '1'?
+	ld (ix),255	; if so: set dot
+OVERMC	inc hl		; next dot
+	add ix,de
+	djnz LOOPMC
+	pop ix		; do not change ix
+	ret
+
+MOPNUM	defb 0		; to store current mop number
+OCOLOR	defb 0		; to stroe old color
+
+EXIT	ld a,(OCOLOR)
+	ld (FCOLOR),a	; restore old color
+	ld a,(PCOLOR)
+	ld (BCOLOR),a
+	in a,(#FF)
+	push af		; clear MM page 2
+	ld a,2
+	out (#FF),a	; (reset protection cartridge)
+	ld hl,#C000
+	ld de,#C001
+	ld bc,100
+	ld (hl),0
+	ldir
+	pop af		; clear MM page 1
+	out (#FF),a	; (basic work area)
+	ex de,hl
+	ld (hl),0
+	ld bc,100
+	lddr
+	ld hl,FIRSTML-#100
+	xor a
+	ld bc,EXIT-FIRSTML+#100
+EXITLP	ld (hl),a	; clear entire program area
+	inc hl
+	dec bc
+	ld a,b
+	or c
+	jr nz,EXITLP
+	ld hl,(STORERR)
+	ld (ERRHAND),hl
+	ld sp,(STACKP)
+	ld hl,#FEDA	; hook might be modified by
+	ld (hl),#C9	; noreset routine
+	inc hl
+	ld (hl),#C9
+	inc hl
+	ld (hl),#C9
+	jp BASIC	; return to BASIC
+
+STACKP	defw 0		; to store stack pointer for return to BASIC
+
+KILLMOP	ld hl,11264
+	ld bc,43008
+	ld a,0
+	call FILVRAM
+	ret
+
+*Include MOPPEN.TXT
+
+ERRORP	defw ERROR	; this error handler just beeps,
+ERROR	call CTRL	; checks for CTRL-STOP and returns
+	jp c,START	; to RETRY.
+	call BEEP
+	ld c,1
+	ret
+
+STORERR	defw 0		; to store old error handler adress
+
+NORESET	defb 'A'	; cartridge ID
+	defb 'B'
+	defw #4010	; init entry
+	defs #10-4	; skip reserved area
+
+	ld hl,#FEDA	; hook which is called after reset
+	ld (hl),#C3	; code for jump instruction
+	inc hl
+	ld (hl),.LOW. FIRSTML
+	inc hl
+	ld (hl),.HIGH. FIRSTML
+	ld hl,OPENTXT+1
+	ld (hl),.LOW. RESTEXT
+	inc hl
+	ld (hl),.HIGH. RESTEXT
+	ld hl,COMPARE
+	ld (hl),#AF
+	inc hl
+	ld (hl),#AF
+	ret
+	ret
+
+NORESLN	equ $-NORESET+8	; length of this routine
+		
+STARTLIN 		; to build up the text
+
+THEEND
+
+	if CODING	; conditional ML coder routine
+
+	ld ix,CODETAB
+	ld b,(THEEND2-CODETAB)/2	; nr. texts to code
+CODLOP1	ld l,(ix)	; read start adress
+	inc ix
+	ld h,(ix)
+	inc ix
+CODLOP2	ld a,(hl)
+	ld c,a
+	CODE
+	ld (hl),a
+	inc hl
+	xor a
+	or c
+	jr nz,CODLOP2
+	djnz CODLOP1
+	
+	ld ix,MOPPEN
+	ld b,32		; 6 texts to code
+CODLP1	ld l,(ix)	; read start adress
+	inc ix
+	ld h,(ix)
+	inc ix
+CODLP2	ld a,(hl)
+	ld c,a
+	CODE
+	ld (hl),a
+	inc hl
+	xor a
+	or c
+	jr nz,CODLP2
+	djnz CODLP1
+
+	ld hl,FIRSTML
+	ld (#8010),hl	; store start adress
+	ld hl,THEEND
+	ld (#8012),hl
+	ret		; to basic, text is coded
+
+	
+CODETAB	defw OPENING	; opening text
+	defw RESTEXT	; opening text after reset
+	defw SOURTXT	; asks for source disk
+	defw DESTTXT	; asks for destination disk
+	defw COPYTXT	; text to be displayed while reading/writing
+	defw FINTEXT	; text saying this disk is copied
+	defw ONLY1D	; text saying there is only 1 drive
+THEEND2
+	endc
+ng/writing
+	defw FINTEXT	; text saying this disk is copied
+	defw
