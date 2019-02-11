@@ -1,0 +1,363 @@
+; JOYSOR by RWL, okt 1991
+;
+; Tsr frame file for GEN80 or M80 assemblers
+;
+
+; Macro definitions
+;
+tsrName	macro
+	  db "RWL JoySor  "       ;TSR ID-Name
+	endm
+;
+memMan	macro @fnc	;Macro for making MemMan
+	  ld e,@fnc	; function calls
+	  call memManEntry
+	endm
+
+
+;---------------------------------------;
+;    Header for the TSR file	;
+;---------------------------------------;
+;
+	db "MST TSR",13,10        ;TSR identifier
+	tsrName	;ID-Name
+	db 26	;^Z
+	dw 0002	;Header file versie, MemMan 2.2
+	dw base	;Code base address
+	dw init	;Init address
+	dw kill	;Kill address
+	dw talk	;TsrCall entry
+	dw tsrLen	;Programma code lengte
+	dw iniLen	;Init code lengte
+
+
+stick	equ 1	; joystick 1(a)
+
+gtstck	equ #00D5	; get stick routine
+gttrig	equ #00D8	; get trigger routine
+
+newkey	equ #FBE5	; new key pattern
+putpnt	equ #F3F8	; put pointer key buffer
+getpnt	equ #F3FA	; get pointer key buffer
+keybuf	equ #FBF0	; toetsenbord buffer
+repcnt	equ #F3F7	; repeat counter
+scncnt	equ #F3F6	; scan counter
+
+cup	equ %00000001
+cdown	equ %00000010
+cleft	equ %00000100
+cright	equ %00001000
+
+up	equ #1E	; cursor omhoog
+down	equ #1F	; cursor omlaag
+left	equ #1D	; cursor links
+right	equ #1C	; cursor rechts
+
+trig1	equ ' '                   ; spatiebalk
+
+trig2	equ 13	; return
+
+
+;---------------------------------------;
+;    Start of TSR-program code	;
+;---------------------------------------;
+;
+extBio	equ 0ffcah	;EXTBIO hook
+;
+hook	equ 0fd9fh	;Dummy: Hook to be bend by this TSR
+;
+info	equ 50	;MemMan function
+getMemManEnt	equ 6	;Info subfunction
+getTsrID	equ 62
+;
+
+;
+; TSR Base Address
+;
+base	equ $	;First byte of program code
+;
+kill:	ret	;No destruction routine
+;
+talk:	ret	;No driver routine
+
+; exec_joysor
+;
+; aan interrupt hook, kopieer joystick stand naar NEW_KEY
+; joystick uitlezen en opslaan voor straks
+
+exec_joysor:	push af
+	push bc
+	push de
+	push hl
+
+; initialiseer locale defaults
+
+	;ld a,(lgscncnt)	 ; laatste globale scan count
+	;ld hl,(scncnt)	 ; huidige scan counter
+	;ld b,(hl)	 ; in b
+	;cp b	 ; laatste - huidige
+	;jp nc,initldo1	 ; if laatste>=huidige
+	;ld a,(hl)	 ; hij is geinitialiseerd!
+	;ld (ldscncnt),a	 ; zet locale default
+initldo1	;ld a,b	 ; bewaar scan counter
+	;ld (lgscncnt),a
+
+	;ld a,(lgrepcnt)	 ; laatste globale repeat count
+	;ld hl,(repcnt)	 ; huidige repeat counter
+	;ld b,(hl)	 ; in b
+	;cp b	 ; laatste - huidige
+	;jp nc,initldo2	 ; if laatste>=huidige
+	;ld a,(hl)	 ; hij is geinitialiseerd!
+	;ld (ldrepcnt),a	 ; zet locale default
+initldo2	;ld a,b	 ; bewaar repeat counter
+	;ld (lgrepcnt),a
+
+; check scan couter
+
+	ld hl,lscncnt	; moeten we actief worden?
+	dec (hl)
+	jp nz,endprogram	; zo nee: exit
+	ld a,(ldscncnt)	; initialiseer
+	ld (hl),a
+
+; scan joystick
+
+	call scanjoy
+
+; doe auto repeat
+
+	ld hl,(getpnt)
+	ld a,(putpnt)
+	cp l	; nog char's in buffer?
+	jp nz,endprogram	; zo ja: geen repeat
+
+	ld hl,lrepcnt	; klaar om te herhalen?
+	dec (hl)
+	jp nz,endprogram	; zo nee: einde
+
+	ld a,1	; stel `korte' repeat in
+	ld (hl),a
+	ld hl,odirection	; wis oude instelling
+	ld (hl),0
+	ld hl,0
+	ld (ostrig1),hl
+
+	call joytobuf	; zet toetsen in buffer (if valid)
+
+endprogram:	pop hl	; herstel registers
+	pop de
+	pop bc
+	pop af
+
+	ex af,af'                 ;Save AF
+	ld a,0	;Reset flags for TsrManager
+	ex af,af'                 ;Restore AF, flags to A'
+	ret	;Return to TsrManager
+
+; scanjoy & joytobuf
+;
+; 
+
+scanjoy	ld a,stick	; haal richtingnr.
+	call gtstck
+	ld (direction),a
+
+	ld a,stick	; lees trigger 1
+	call gttrig
+	ld (strig1),a
+
+	ld a,stick+2	; lees trigger 2
+	call gttrig
+	ld (strig2),a
+
+; stel auto-repeat in als anders dan vorige keer
+
+	ld a,(direction)	; verandering van richting mag,
+	or a
+	jp nz,joytobuf	; maar stilstaan betekend lange rep.
+	ld hl,(strig1)
+	ld de,(ostrig1)
+	xor a	; Cy=0
+	sbc hl,de
+	jp z,joytobuf
+
+; stel lange repeat in
+
+setrepcnt	ld a,(ldrepcnt)
+	ld (lrepcnt),a
+
+; zet huidige joystick gegevens in toetsenbuffer
+
+joytobuf	ld a,(direction)
+	or a	; is nul?
+	jp z,trigger1	; zo ja: direct naar triggers
+	ld hl,odirection	; gelijk aan vorige?
+	cp (hl)
+	jp z,trigger1	; zo ja: direct naar triggers
+
+	ld e,a	; zet voor elke richting een bit
+	ld d,0
+	ld hl,dirtab
+	add hl,de
+	ld e,(hl)
+
+	ld a,e	; check bit voor up
+	ld bc,up*256+cup
+	and c
+	call nz,putbuf
+
+	ld a,e	; check bit voor down
+	ld bc,down*256+cdown
+	and c
+	call nz,putbuf
+
+	ld a,e	; check bit voor left
+	ld bc,left*256+cleft
+	and c
+	call nz,putbuf
+
+	ld a,e	; check bit voor right
+	ld bc,right*256+cright
+	and c
+	call nz,putbuf	  
+
+; dan trigger 1
+
+trigger1	ld a,(ostrig1)
+	ld hl,strig1
+	xor (hl)
+	and (hl)	; net ingedrukt?
+	jp z,trigger2
+	ld b,trig1	; vervangende toetscode
+	call nz,putbuf
+
+
+; dan trigger 2
+
+trigger2	ld a,(ostrig2)
+	ld hl,strig2
+	xor (hl)
+	and (hl)	; net ingedrukt?
+	jp z,copyjoy
+	ld b,trig2	; vervangende toetscode
+	call nz,putbuf
+
+; tenslotte instelling naar oude kopieren
+
+copyjoy	ld a,(direction)	; richting
+	ld (odirection),a
+	ld hl,(strig1)	; beide triggers
+	ld (ostrig1),hl
+
+	ret	; terug
+
+
+; putbuf
+;
+; zet karakter b in toetsenbuffer, E wordt niet beinvloed
+
+putbuf	push af	; bewaar registers
+	push de
+
+	ld hl,(putpnt)	; haal putpointer
+	ld (hl),b	; sla karakter alvast op
+	inc hl	; verhoog putpointer
+	ld a,#18	; buiten buffer?
+	cp l
+	jr nz,putbufover
+	ld hl,keybuf	; zo ja: dan naar begin
+putbufover	ld a,(getpnt)	; buffer vol?
+	cp l
+	jr z,putbufout	; zo ja: exit
+	ld (putpnt),hl	; zo nee: bewaar putpointer
+
+putbufout	pop de
+	pop af
+	ret
+
+
+lscncnt	defb 1	; locale scan counter
+lrepcnt	defb 1	; locale repeat counter
+
+ldscncnt	defb 2	; locale scan default
+ldrepcnt	defb 13	; locale repeat default
+
+lgscncnt	defb 255	; laatste globale scncnt
+lgrepcnt	defb 255	; laatste globale repcnt
+
+
+direction	defb 0
+strig1	defb 0
+strig2	defb 0
+
+odirection	defb 0
+ostrig1	defb 0
+ostrig2	defb 0
+
+; dirtab
+;
+; tabel met richtingen waarin de joystick kan bewegen
+
+dirtab	defb 0	; 0
+	defb cup	; 1
+	defb cup .OR. cright	; 2
+	defb cright	; 3
+	defb cright .OR. cdown	; 4
+	defb cdown	; 5
+	defb cdown .OR. cleft	; 6
+	defb cleft	; 7
+	defb cleft .OR. cup	; 8 
+
+
+; memManEntry
+;
+; Entry address for MemMan function calls
+;
+memManEntry:	jp 0	;Address filled in by init routine
+
+tsrLen	equ $-base	;Length of TSR programcode
+
+
+;---------------------------------------;
+;     Init-code	;
+;---------------------------------------;
+;
+init:	ld b,getMemManEnt	;Ask for MemMan entry
+	ld de,256*'M' + info      ;Call the MemMan info function
+	call extBio	;Through the ExtBio hook
+	ld (memManEntry+1),hl	;Save the MemMan entry address
+
+	ld hl,tTsrName	;Pointer to TSR name-string
+	memMan getTsrID	;See if this TSR already exists
+	jr nc,initDouble	; Yes, => Double installed error
+
+	ld a,0	;Flags in A, no messages
+	ret	;Init ready, return to TsrLoad
+
+initDouble:	ld de,tDouble	;DE=Text pointer
+	ld a,3	;Flags for TL: Print text & Abort
+	ret	;Return to TsrLoad
+
+;
+tTsrName:	tsrName	;Macro for tsr-name string
+;
+tDouble:	db 'This TSR is already ' ;Error text, 0-terminated
+	db 'installed',13,10,10,0
+;
+iniLen	equ $-init	;Length of init-code
+;
+;---------------------------------------;
+;    Hook Table	;
+;---------------------------------------;
+;
+hooks:	dw hokTabLen	;Length of HokTab
+	dw #FD9F	; H.TIMI (Timer Interupt)
+	dw exec_joysor
+;
+hokTabLen	equ $-hooks	;Length of hook-table
+;
+;---------------------------------------;
+;
+	end	;TSRFRAME
+;
+
