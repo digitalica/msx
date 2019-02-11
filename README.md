@@ -12,6 +12,7 @@ Veel ervan zijn gepubliceerd in
 - [koppie](./koppie/README.md)
 - [mousor](./joysor/README.md)
 - [old](./old/README.md)
+- [printerutils](./printerutils/README.md)
 - [sw (stopwatch)](./sw/README.md)
 - [tracer](./tracer/README.md)
 
@@ -21,8 +22,8 @@ De compiler die ik gebruikte was Hisoft Devpac 80
 (zie [cpcwiki](http://www.cpcwiki.eu/index.php/Hisoft_Devpac_80) 
 of [Generation MSX](https://www.generation-msx.nl/software/hisoft/devpac80/2494/))
 
-De tapstops stonden op 14 en 40 in de source (.GEN) files. Hier staat daarom ook altijd een .GEN.TXT
-file waaron de tabs omgezet zijn naar spaties.
+De tapstops stonden soms op rare plekken in de source (.GEN) files. Hier staat daarom ook altijd een .GEN.TXT
+file waarin de tabs omgezet zijn naar spaties.
 
 
 ## Emulatoren

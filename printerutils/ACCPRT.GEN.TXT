@@ -1,0 +1,148 @@
+* L+, P+, TablePrint, WritePRNfile
+
+
+; ACCPRT (accentjes print)
+; is een printer-utility die aan
+; de LPRINT-HOOK gaat hangen en zo
+; alle accent lettertjes via de BS-
+; methode print. Ook kan er gekozen
+; worden voor printen zonder accent
+; of helemaal niet printen of direct
+; doorsturen (per accent-type)
+;
+; by R W L      november 1987
+
+
+LPTOUT  equ #00A5       ; prints char
+BACKSP  equ 8
+
+        defb #FE
+        defw START
+        defw EIND
+        defw START
+
+        org #C000
+
+START   push af
+        ld (CHAR),a
+        cp 128          ; te klein?
+        jr c,FASTEX
+        cp 191          ; te groot?
+        jr nc,FASTEX
+        push bc
+        push de
+        push hl
+        ld hl,ACCTAB-256
+        ld e,a
+        ld d,0
+        ex de,hl
+        add hl,hl       ; * 2
+        add hl,de       ; (hl)-->accent
+        
+        ld e,(hl)
+        inc hl
+        ld d,(hl)
+        xor a
+        or e
+        jr z,EXIT
+
+; e=de ASCII code van de letter
+; d=soort accent code: 0=', 1=\, 2=~
+;   3=", 4=^, 5=o en 6=,
+
+        ld hl,TYPTAB
+        ld c,d
+        ld b,0
+        sla c
+        add hl,bc
+        ld c,(hl)
+        inc hl
+        ld b,(hl)
+
+; c=wat te doen met dit accent type:
+;   0=letter sturen als ander kar (_)
+;   1=letter sturen zonder accent
+;   2=letter sturen d.m.v. BS methode
+;   3=letter gewoon doorsturen
+; b=code van vervangend accent
+
+        ld a,c
+        cp 3
+        jr z,EXIT
+        cp 2
+        jr nz,NIET2
+        ld a,e
+        call LPTOUT
+        ld a,BACKSP
+        call LPTOUT
+        ld a,b
+        ld (CHAR),a
+        jp EXIT
+NIET2   cp 1
+        jr nz,NIET1
+        ld a,e
+        ld (CHAR),a
+        jr EXIT
+NIET1   ; (dus 0)
+        ld a,'_'
+        ld (CHAR),a
+        ; valt vanzelf in EXIT
+EXIT    pop hl
+        pop de
+        pop bc
+FASTEX  pop af
+        ld a,(CHAR)
+HOOK    ret
+        ret
+        ret
+        ret
+        ret
+        ret
+
+CHAR    defb 0  ; character to print
+
+TYPTAB  ; streepje naar rechts
+        defb 2,"'"
+        ; streepje naar links
+        defb 1," "
+        ; golfje
+        defb 2,"~"
+        ; trema/umlaut
+        defb 2,'"'
+        ; dakje
+        defb 2,"^"
+        ; rondje
+        defb 0," "
+        ; vijfje
+        defb 2,","
+
+ACCTAB  defb    'C',6,  'u',3,  'e',0
+        defb    'a',4,  'a',3,  'a',1
+        defb    'a',5,  'c',6,  'e',4
+        defb    'e',3,  'e',1,  'i',3
+        defb    'i',4,  'i',1,  'A',3
+        defb    'A',5,
+        defb    'E',0,  0,0,    0,0
+        defb    'o',4,  'o',3,  'o',1
+        defb    'u',4,  'u',1,  'y',3
+        defb    'O',3,  'U',3,  0,0
+        defb    0,0,    0,0,    0,0
+        defb    0,0
+        defb    'a',0,  'i',0,  'o',0
+        defb    'u',0,  'n',2,  'N',2
+        defb    0,0,    0,0,    0,0
+        defb    0,0,    0,0,    0,0
+        defb    0,0,    0,0,    0,0
+        defb    0,0
+        defb    'A',2,  'a',2,  'I',2
+        defb    'i',2,  'O',2,  'o',2
+        defb    'U',2,  'u',2,  0,0
+        defb    0,0,    0,0,    0,0
+        defb    0,0,    0,0,    0,0
+        defb    0,0
+
+EIND   'a',2,  'I',2
+        defb    'i',2,  'O',2,  'o',2
+        defb    'U',2,  'u',2,  0,0
+        defb    0,0,    0,0,    0,0
+        defb    0,0

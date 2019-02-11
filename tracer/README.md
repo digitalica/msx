@@ -14,10 +14,10 @@ Beschreven op
 [Generation MSX](https://www.generation-msx.nl/software/mst/tracer/release/4825/).
 
 Genoemd in
-[MSX Computer Magazine nr. 54 – mei1992](https://www.msxcomputermagazine.nl/archief/mcm-54/).
+[MSX Computer Magazine nr. 54 – mei 1992](https://www.msxcomputermagazine.nl/archief/mcm-54/).
 
 Getest in
-[MSX Computer Magazine nr. 55 – mei1992](https://www.msxcomputermagazine.nl/archief/mcm-55/).
+[MSX Computer Magazine nr. 55 – mei 1992](https://www.msxcomputermagazine.nl/archief/mcm-55/).
 
 
 Omzetting is gedaan in Linux CLI met:

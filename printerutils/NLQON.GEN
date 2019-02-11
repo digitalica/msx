@@ -1,0 +1,59 @@
+
+; Dit programma zet een printer
+; uit Dos in een bepaalde printmode.
+; Welke, dat kan iedereen zelf kiezen.
+; By RWL, Jan 1988.
+
+MSXDOS	equ #0005	; sytem call
+CONOUT	equ #02	; screen output
+PRTOUT	equ #05	; printer output
+CR	equ 13
+LF	equ 10
+
+	ld hl,MESSAGE
+	ld b,CODE-MESSAGE
+	ld c,CONOUT
+LOOP1	ld e,(hl)
+	inc hl
+	push hl
+	push bc
+	call MSXDOS
+	pop bc
+	pop hl
+	djnz LOOP1
+	ld e,CR
+	ld c,CONOUT
+	call MSXDOS
+	ld e,LF
+	ld c,CONOUT
+	call MSXDOS
+
+	ld hl,CODE
+	ld b,EIND-CODE
+	ld c,PRTOUT
+LOOP2	ld e,(hl)
+	inc hl
+	push hl
+	push bc
+	call MSXDOS
+	pop bc
+	pop hl
+	djnz LOOP2
+
+	ret
+
+MESSAGE	defm 'NLQ is on now'
+
+CODE	defb 27,'x',1
+
+EIND
+
+	push bc
+	call MSXDOS
+	pop bc
+	pop hl
+	djnz LOOP2
+
+	ret
+
+MESSAGE	defm 'NLQ is
