@@ -1,4 +1,7 @@
 # Mousor
+
+[source](./MOUSOR.GEN.TXT)
+
 Een utility om de cursor te bewegen met en muis. De muis input wordt omgezet naar cursortoetsen.
 Het is een TSR voor MemMan 2.
 

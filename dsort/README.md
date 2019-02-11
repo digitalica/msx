@@ -1,4 +1,7 @@
 # DSORT
+
+[source](./DSORT.GEN.TXT)
+
 Een utility om directories op floppy disk te sorteren.
 
 Tabstops gebruikt: 8, 16, 24, 32
