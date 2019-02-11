@@ -1,0 +1,341 @@
+
+; FDATE maakt het mogelijk de datum
+; van files te veranderen.
+
+; door RWL, september 1988
+
+RETURN  equ #0000
+FILE1   equ #005C
+BDOS    equ #0005
+COMMAND equ #0080
+SFIRST  equ #0011
+SNEXT   equ #0012
+OPEN    equ #000F
+CLOSE   equ #0010
+SETDMA  equ #001A
+STRING  equ #0009
+SECWRIT equ #0030
+SECREAD equ #002F
+CHAROUT equ #0002
+DRVINFO equ #001B
+
+MSXDOS  macro @FUNCTIE
+        ld c,@FUNCTIE   ; MSXDOS aanroep
+        call BDOS
+        endm
+
+CALLZ   macro @ROUTINE
+        push af         ; CALL Z, zero blijft
+        call z,@ROUTINE
+        pop af
+        endm
+
+START   ld a,(#0080)    ; argumenten?
+        cp 2
+        jp c,UITLEG
+        call GETNEW     ; uit command line
+        call CHKDAT     ; datum geldig?
+        CALLZ,ERRDAT    ; anders stop
+        jp z,EXIT
+        call DATHL
+        ld (NEWDAT),hl
+        ld de,TRANS
+        MSXDOS SETDMA   ; zet DMA
+        ld de,FILE1
+        MSXDOS SFIRST   ; zoek eerste
+        inc a
+        CALLZ,ERRFIL    ; anders stop
+        jp z,EXIT
+
+MLOOP   ld de,TRANS
+        MSXDOS OPEN
+        MSXDOS CLOSE    ; om plaats in dir. te vinden
+        ld de,BLOCK
+        MSXDOS SETDMA
+        ld a,(TRANS+25)
+        and %00001111
+        ld (SECPOS),a
+        ld a,(TRANS+25)
+        rra
+        rra
+        rra
+        rra
+        and %00001111
+        ld (SECNUM),a
+        ld a,(TRANS)    ; drive num
+        MSXDOS DRVINFO
+        ld a,(ix+17)
+        ld l,a
+        ld a,(ix+18)
+        ld h,a          ; hl=sector nr. dir
+        ld a,(SECNUM)
+        ld d,0
+        ld e,a
+        add hl,de
+        ld e,l
+        ld d,h          ; de=sectornr. to read
+        ld h,1          ; 1 sector to read
+        ld a,(TRANS)
+        dec a
+        ld l,a          ; drive nr.
+        push de
+        push hl
+        MSXDOS SECREAD
+        ld de,BLOCK+24
+        ld h,0
+        ld a,(SECPOS)
+        ld l,a
+        add hl,hl
+        add hl,hl
+        add hl,hl
+        add hl,hl
+        add hl,hl
+        add hl,de
+        ld de,(NEWDAT)
+        ld (hl),d
+        inc hl
+        ld (hl),e
+        pop hl
+        pop de
+        MSXDOS SECWRIT
+
+PRINT   ld de,TRANS
+        MSXDOS SETDMA
+        ld de,TRANS
+        ld hl,TRANS+1
+        ld bc,8
+        ldir
+        ld a,'$'
+        ld (TRANS+8),a
+        ld (TRANS+12),a
+        ld de,TRANS
+        MSXDOS STRING
+        ld e,' '
+        MSXDOS CHAROUT
+        ld de,TRANS+9
+        MSXDOS STRING
+        ld e,10
+        MSXDOS CHAROUT
+        ld e,13
+        MSXDOS CHAROUT
+        MSXDOS SNEXT    ; zoek volgende
+        inc a
+        jp nz,MLOOP
+EXIT    MSXDOS RETURN
+
+ERRFIL  ld de,FILERR
+        MSXDOS STRING
+        jp UITLEG
+
+ERRDAT  ld de,DATERR
+        MSXDOS STRING
+
+UITLEG  ld de,HELPTXT
+        MSXDOS STRING
+        ret
+
+FILERR  defb 10,13
+        defb '  FILE NIET GEVONDEN!',10,13
+        defb '$'
+
+DATERR  defb 10,13
+        defb '  DATUM ONGELDIG!',10,13
+        defb '$'
+
+HELPTXT defb 10,13
+        defb '  FDATE 2.00 is een extern',10,13
+        defb '  DOS commando om de datum',10,13
+        defb '  van files te veranderen.',10,13
+        defb 10,13
+        defb '  Syntax:',10,13
+        defb '  FDATE <filespec> <datum>',10,13
+        defb 10,13
+        defb '  <filespec> is een gewone',10,13
+        defb '  filenaam, wildcards zijn',10,13
+        defb '  toegestaan.',10,13
+        defb '  <datum> staat in de vorm',10,13
+        defb '  DD:MM:JJJJ. Het jaar mag',10,13
+        defb '  1980 t/m 2079 zijn, door',10,13
+        defb '  DD of MM als 0 op te ge-',10,13
+        defb '  ven verdwijnt de datum.',10,13
+        defb  10,13
+        defb '                       RWL',10,13
+        defb 10,13
+        defb '$'
+
+GETNEW  ld bc,COMMAND+1 ; sla lengte over
+        ld de,0
+        ld hl,0
+        call TOSPACE    ; eerstevolgende spatie
+        call NOSPACE    ; begin f-naam
+        call TOSPACE    ; eerste spatie
+        call NUMBER
+        ld e,l          ; e is de dag
+        call NUMBER
+        ld d,l          ; d is de maand
+        call NUMBER     ; hl is jaar
+        push de         ; corrigeer jaar
+        push hl         ; 1980-2079 
+        ld de,100
+        or a
+        sbc hl,de
+        pop hl
+        jp nc,FOURDG
+        push hl
+        ld de,80
+        or a
+        sbc hl,de
+        pop de          ; let op!
+        jp nc,CEXIT
+        ld h,d
+        ld l,e
+        ld de,20
+        add hl,de
+        jp CEXIT
+FOURDG  push hl
+        ld de,2080      ; wordt 00-99
+        or a
+        sbc hl,de
+        pop hl
+        jp nc,CEXIT     ; stop, hl>=2080
+        push hl
+        ld de,1980
+        or a
+        sbc hl,de
+        pop hl
+        jp c,CEXIT      ; stop, hl<1980
+        ld de,-1980     ; altijd 1980 eraf
+        add hl,de
+CEXIT   pop de
+        ret
+
+NODATES pop de          ; uit subroutine
+NODATE  ld de,-1
+        ld hl,-1
+        ret
+
+TOSPACE dec bc          ; naar spatie
+TLOOP   inc bc
+        ld a,(bc)
+        cp 13
+        jp z,NODATES
+        cp ' '
+        jr nz,TLOOP
+        ret
+
+NOSPACE dec bc          ; naar niet-spatie
+NLOOP   inc bc
+        ld a,(bc)
+        cp 13
+        jp z,NODATES
+        cp ' '
+        jr z,NLOOP
+        ret
+        
+NUMBER  ld hl,0         ; lees getal
+        dec bc
+NLOOP1  inc bc
+        ld a,(bc)
+        cp 13
+        ret z
+        cp '0'
+        jp c,NLOOP1
+        cp '9'+1
+        jp nc,NLOOP1
+NLOOP2  push de
+        add hl,hl
+        ld d,h
+        ld e,l
+        add hl,hl
+        add hl,hl
+        add hl,de
+        sub '0'
+        ld d,0
+        ld e,a
+        add hl,de
+        pop de
+        inc bc
+        ld a,(bc)
+        cp '0'
+        ret c
+        cp '9'+1
+        ret nc
+        cp 13
+        ret z
+        jp NLOOP2
+
+CHKDAT  ld a,d          ; kijkt of datum geldig is
+        or a            ; Zero als ongeldig
+        jp z,DATE0      ; maand 0?
+        ld a,e
+        or a            ; dag 0?
+        jp z,DATE0
+        ld a,l
+        cp 100+1        ; jaar < 100?
+        jp nc,CDERR
+        ld a,d          ; maand
+        cp 12+1
+        jp nc,CDERR
+        push hl
+        push de
+        ld l,d
+        ld h,0
+        dec l
+        ld de,MAANDEN
+        add hl,de
+        ld a,(hl)
+        pop de
+        pop hl
+        cp e            ; dagen?
+        jp c,CDERR
+        ld a,l
+        and %11         ; mod. 4, a=0: schrikkel
+        xor %11         ; a<>0: schrikkel
+        ret nz          ; schrikkel: ok
+        ld a,d
+        cp 2
+        ret nz          ; niet feb.
+        ld a,e
+        cp 29
+        ret nz          ; niet dag 29
+CDERR   xor a           ; zet zero
+        ret
+DATE0   ld de,0         ; dag of maand was 0,
+        ld l,0          ; geen datum.
+        or a
+        inc a
+        ret
+
+DATHL   ld a,d          ; Zet d,e,l datum naar HL
+        srl a
+        rra
+        rra
+        rra
+        adc hl,hl       ; l=JJJJJJJM
+        or e
+        ld h,a          ; h=MMMDDDDD
+        ret
+        
+MAANDEN defb 31         ; jan
+        defb 29         ; feb
+        defb 31         ; mrt
+        defb 30         ; apr
+        defb 31         ; mei
+        defb 30         ; jun
+        defb 31         ; jul
+        defb 31         ; aug
+        defb 30         ; sep
+        defb 31         ; okt
+        defb 30         ; nov
+        defb 31         ; dec
+
+SECNUM  defb 0
+SECPOS  defb 0
+NEWDAT  defw 0
+
+TRANS
+
+BLOCK   equ TRANS+37
+efb 31         ; okt
+        defb 30         ; nov
+        defb 31         ; dec

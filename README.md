@@ -6,6 +6,7 @@ Veel ervan zijn gepubliceerd in
 ## Software
 
 - [dsort](./dsort/README.md)
+- [fdate](./fdate/README.md)
 - [ftime](./ftime/README.md)
 - [joysor](./joysor/README.md)
 - [koppie](./koppie/README.md)
