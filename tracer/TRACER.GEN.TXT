@@ -1,0 +1,1513 @@
+; TRACER,
+;
+; een volgprogramma voor MSX Basic, door RWL, oktober 1991
+; speciaal voor MemMan versie 2.2 en hoger, een echte MemMan TSR
+
+; Automodes (bij alle modes > 0 is in ieder geval de hotkey actief)
+; 0 O TROFF  verschijn niet automatisch (TROFF)
+; 1 H        Hotkey only
+; 2 L TRON   every Line
+; 3 S        every Statement
+; 4 F        at Full window
+; 5 B        at Breakpoint
+
+; Macro definitie's
+;
+;
+
+tsrname       macro
+                db "RWL Tracer  "       ;TSR ID-Name
+              endm
+
+
+memMan        macro @fnc                ;Macro for making MemMan
+                ld e,@fnc               ; function calls
+                call memManEntry
+              endm
+
+
+positie       macro @rij,@kolom         ; macro om een VRAM adres
+
+                if @rij=0               ; rij adres in HL
+                  ld hl,0
+                else
+                  ld hl,(vramlinlen)
+                endif
+
+                if @rij>1               ; als rij>1 vermenigvuldigen
+                  ld de,@rij
+                  call multHLDE
+                endif
+
+                if @kolom=1             ; kolom nummer erbij optellen
+                  inc hl
+                endif
+
+                if @kolom>1
+                  ld de,@kolom
+                  add hl,de
+                endif
+
+                ld de,(topleft)         ; topleft erbij optellen
+                add hl,de
+
+              endm
+
+
+schrijf       macro @adres,@lengte      ; schrijft blokje naar VRAM
+                call setwrt             ; (zet interrupts uit)
+                ld b,@lengte
+                ld hl,@adres
+                otir
+                ei
+              endm
+
+vdplees       macro @adres,@lengte      ; leest blokje van VRAM
+                call setrd              ; (zet interrupts uit)
+                ld b,@lengte
+                ld hl,@adres
+                inir
+                ei
+              endm
+
+
+; BIOS Entry's
+;
+; VDP set RD/WRT zouden MSX 1 entry's moeten zijn.....
+
+nsetwrt       equ #0171                 ; set VDP for write
+nsetrd        equ #016E                 ; set VDP for read
+chrget        equ #009F                 ; lees karakter van toetsenbord
+settxt        equ #0078                 ; sets VDP for text mode
+wrtvdp        equ #0047                 ; schrijf VDP register
+chgclr        equ #0062                 ; stelt kleuren in
+enascr        equ #0044                 ; scherm aan
+disscr        equ #0041                 ; scherm uit
+kilbuf        equ #0156                 ; wist toetsenbuffer
+chkbuf        equ #009C                 ; test buffer
+beep          equ #00C0                 ; beep, laat een pieptoon horen
+
+
+; Systeem variabelen
+;
+;
+
+curlin        equ #F41C                 ; cur. regelnr. 2x255 if direct
+linlen        equ #F3B0                 ; lengte van de regels
+lincnt        equ #F3b1                 ; # regels
+nambas        equ #F922                 ; current name table
+cgpbas        equ #F924                 ; current pattern generator
+txtnam        equ #F3B3                 ; name tabel voor text mode
+txtcgp        equ #F3B7                 ; pattern generator voor text mode
+scrmod        equ #FCAF                 ; current screen mode
+newkey        equ #FBE5                 ; new key matrix
+vdpregs       equ #F3DF                 ; vdp registers (8 stuks)
+vdpregs2      equ #FFE7                 ; vdp registers voor MSX2 (16 stuks)
+csrsw         equ #FCA9                 ; cursor display switch
+cnsdfg        equ #F3DE                 ; function key displat switch
+
+
+; Hooks
+;
+;
+
+extBio        equ #FFCA                 ;EXTBIO hook
+h_news        equ #FF3E                 ;af te buigen New Statement Hook
+h_cmd         equ #FE0D                 ;af te buigen CMD Hook
+
+
+; Basic Tokens
+;
+;
+
+t_tron        equ #A2
+t_troff       equ #A3
+t_clear       equ #92
+
+
+; MemMan functienummers
+;
+;
+
+info          equ 50                    ;MemMan function
+getMemManEnt  equ 6                     ;Info subfunction
+getTsrID      equ 62
+
+
+; Overige constanten
+;
+;
+
+win_h         equ 10                    ; hoogte window
+win_w         equ 31                    ; breedte window
+win_hw        equ (win_h*win_w)         ; omvang window
+lin_h         equ 4                     ; aantal regels voor regelnummers
+
+keyoffset     equ 6                     ; offset in newkey
+keycode       equ %00010000             ; hotkey definitie
+keycap        equ %00001000
+keygraph      equ %00000100
+keyctrl       equ %00000010
+keyshift      equ %00000001
+hotkeymask    equ keycode .OR. keygraph
+
+
+;---------------------------------------;
+;    Header for the TSR file            ;
+;---------------------------------------;
+
+              db "MST TSR",13,10        ;TSR identifier
+              tsrname                   ;ID-Name
+              db 26                     ;^Z
+              dw 0002                   ;Header file versie, MemMan 2.2
+              dw base                   ;Code base address
+              dw init                   ;Init address
+              dw kill                   ;Kill address
+              dw talk                   ;TsrCall entry
+              dw tsrLen                 ;Programma code lengte
+              dw iniLen                 ;Init code lengte
+
+
+;---------------------------------------;
+;    TSR program Area                   ;
+;---------------------------------------;
+
+base          equ $                     ;First byte of program code
+
+
+; kill entry
+;
+; op dit moment niet aanwezig
+
+kill:         ret                       ;No destruction routine
+
+
+; talk entry
+;
+; op dit moment niet aanwezig
+
+talk:         ret                       ;No driver routine
+
+
+
+; exex_news
+;
+; deze routine wordt geactiveerd door de New Statement hook. Tracer Body.
+
+exec_news:    push af                   ; bewaren registers
+              push hl
+              push bc
+              push de
+
+              ld (oldtxt),hl
+
+              ld hl,(curlin)            ; check for direct statement
+              inc hl                    ; is hl 65535?
+              ld a,h
+              or l
+              jr z,exit_news            ; direct statement --> end!
+
+              ld a,0                    ; assume geen nieuwe regel
+              ld (newlinflg),a
+
+              ld hl,(curlin)            ; nieuwe regel?
+              ld de,(oldlin)            ; (wordt gezet bij verlaten)
+              or a
+              sbc hl,de                 ; gelijk aan oude?
+              jr nz,news_1              ; zo nee: nieuwe regel
+
+              ld hl,(oldtxt)            ; exact hetzelfde punt als vorige?
+              ld de,(lasttxt)           ; (voor lege FOR-NEXT op 2 regels)
+              or a
+              sbc hl,de
+              jr nz,news_2
+
+news_1        ld a,1                    ; we hebben een nieuwe regel!
+              ld (newlinflg),a
+              call addlin               ; regelnummer toevoegen aan lijst
+
+news_2        call chkputwin            ; moeten we het window tonen?
+              call nz,exec_tracer       ; zo ja: window ophet scherm: actie!
+
+exit_news     ld hl,(curlin)            ; oldlin updaten
+              ld (oldlin),hl
+
+              ld hl,(oldtxt)            ; bewaar oude text pointer
+              ld (lasttxt),hl
+
+              pop de                    ; herstellen registers
+              pop bc
+              pop hl
+              pop af
+
+              ex af,af'                 ; zet vlaggen voor TSR manager
+              ld a,0
+              ex af,af'
+
+              ret                       ; terug naar TSR manager
+
+oldtxt        defw 0
+
+; exec_cmd
+; 
+; voor CMD TRON, CMD TROFF, CMD CLEAR TRACER en CMD TRACER
+
+exec_cmd      push af
+              push hl
+
+              ld (oldtxt),hl
+
+trytron       cp t_tron                 ; token voor TRON?
+              jr nz,trytroff
+              call chrgtr               ; einde statement?
+              jr nz,ec_notok
+              ex (sp),hl                ; update textpointer
+              call exec_tron
+              jp ec_ok
+
+trytroff      cp t_troff                ; token voor TROFF?
+              jr nz,tryclear
+              call chrgtr               ; end of statement?
+              jr nz,ec_notok
+              ex (sp),hl                ; update text pointer
+              call exec_troff
+              jr ec_ok
+
+tryclear      cp t_clear                ; token voor CLEAR?
+              jr nz,trytracer
+              call chrgtr               ; lees token ('T'?)
+              call chktracer            ; TRACER?
+              jr nz,ec_notok
+              ex (sp),hl                ; update text pointer
+              call exec_clear
+              jr ec_ok
+
+trytracer     call chktracer            ; TRACER?
+              jr nz,ec_notok
+              ex (sp),hl                ; update text pointer
+              call exec_tracer
+              jr ec_ok
+
+ec_ok         pop hl                    ; gewijzigde tekst pointer halen
+              pop af
+              pop ix                    ; return adres manager
+              inc sp                    ; verwijder return naar error
+              inc sp
+
+              ex af,af'
+              ld a,1                    ; uitgevoerd, rest van hook niet
+              ex af,af'
+              jp (ix)                   ; terug naar Manager
+
+ec_notok      pop hl
+              pop af
+              ex af,af'
+              ld a,0                    ; rest uitvoeren
+              ex af,af'
+              ret
+
+
+; chktracer
+;
+; checkt op keyword tracer in input. Z vlag if ok, anders NZ.
+
+chkchar       macro @char
+                cp @char
+                ret nz
+                call chrgtr
+              endm
+
+chktracer     chkchar "T"
+              chkchar "R"
+              chkchar "A"
+              chkchar "C"
+              chkchar "E"
+              chkchar "R"
+              call chrgtr
+              ret
+
+
+; exec_tron
+;
+; voert het CMD TRON commando daadwerkelijk uit, TRACER in auto mode
+
+exec_tron     ld a,2                    ; iedere regel verschijnen
+              ld (automode),a
+              ret
+
+; exec_troff
+;
+; voert het CMD TROFF commando daadwerkelijk uit, TRACER uit auto mode
+
+exec_troff    xor a                     ; tracer niet auto-activeren
+              ld (automode),a           ; automode uit
+              ret
+
+; exec_clear
+;
+; voert het CMD CLEAR TRACER commando daadwerkelijk uit, volledige init
+
+exec_clear    call clearnrs             ; wis regelnummers
+              call clearbreaks
+              call exec_tron            ; TRON
+              ret
+
+; exec_tracer
+;
+; voert het CMD TRACER commando daadwerkelijk uit, window op scherm en actie
+
+exec_tracer   ld a,(7)                  ; VDP I/O poorten instellen
+              ld (vdpwrite),a
+              ld a,(6)
+              ld (vdpread),a
+; Bovenstaande moet eigenlijk in init, maar dan is BIOS niet actief
+
+              call savemode             ; bewaar oude schermmode
+              call initmode             ; haal regellengte & check positie
+              call savevram             ; bewaar ruimte voor window
+
+              ld a,(csrsw)              ; bewaar cursor mode
+              ld (oldcsrsw),a
+              xor a                     ; cursor uit
+              ld (csrsw),a
+              ld a,(cnsdfg)             ; F-key display switch
+              ld (oldcnsdfg),a
+              xor a                     ; F-key's uit.
+              ld (cnsdfg),a
+
+              call kilbuf
+
+              call putwindow            ; zet window neer
+              call docommand            ; voer commando's uit
+
+              ld a,(oldcsrsw)           ; herstel cursor
+              ld (csrsw),a
+              ld a,(oldcnsdfg)          ; herstel F-key mode
+              ld (cnsdfg),a
+
+              call restvram             ; herstel VRAM ruimte voor window
+              call restmode             ; herstel (indien nodig) schermmode
+              ret
+
+
+; savevram
+;
+; bewaard VRAM gebied dat overschreven gaat worden in buffer
+
+savevram      ld hl,(topleft)           ; bereken VRAM adres linker bovenh.
+              ld de,oldwindow           ; hier kan de zaak bewaard worden.
+              ld b,win_h
+savevl1       push bc
+              push hl
+              call setrd                ; zet vdp voor lezen
+              ld b,win_w
+              ex de,hl
+              inir                      ; lees regel in
+              ei
+              ex de,hl
+              pop hl
+              ld bc,(vramlinlen)        ; naar volgende regel
+              add hl,bc
+              pop bc
+              djnz savevl1
+              ret
+
+
+; restvram
+;
+; hersteld bewaarde VRAM gebied
+
+restvram      ld hl,(topleft)           ; bereken VRAM adres linker bovenh.
+              ld de,oldwindow           ; hier kan de zaak opgehaald worden.
+              ld b,win_h
+restvl1       push bc
+              push hl
+              call setwrt               ; zet vdp voor schrijven
+              ld b,win_w
+              ex de,hl
+              otir                      ; schrijf regel in
+              ei
+              ex de,hl
+              pop hl
+              ld bc,(vramlinlen)        ; naar volgende regel
+              add hl,bc
+              pop bc
+              djnz restvl1
+              ret
+
+oldwindow     defs win_h*win_w          ; ruimte voor oude scherminhoud
+
+
+; savemode
+;
+; bewaar oude schermmode gegevens, als het een grafisch scherm is.
+
+savemode      ld a,(scrmod)             ; bepaal huidige mode
+              ld (oldscrmod),a          ; bewaar voor herstellen
+              cp 2
+              ret c                     ; breek af als 0 of 1
+
+              call disscr
+
+              ld hl,(nambas)            ; bewaar name table base
+              ld (oldnambas),hl
+              ld hl,(cgpbas)             ; bewaar pattern table base
+              ld (oldcgpbas),hl
+              ld a,(linlen)
+              ld (oldlinlen),a
+              ld a,40
+              ld (linlen),a
+
+              ld hl,vdpregs             ; bewaar VDP registers
+              ld de,oldvdpregs
+              ld bc,8
+              ldir
+
+              ld hl,vdpregs2            ; ook MSX2 registers
+              ld de,oldvdp2regs
+              ld bc,16
+              ldir
+
+
+              ld a,0                    ; naar screen 0
+              ld (scrmod),a
+
+              call settxt               ; schakel naar text mode 0 (40 kol)
+              call chgclr               ; stel kleuren in
+
+              ld hl,(txtnam)
+              ld (nambas),hl
+              ld hl,(txtcgp)
+              ld (cgpbas),hl
+
+              ld hl,(cgpbas)            ; bewaar 1kB character set
+              call setrd
+              ld b,0
+              ld hl,oldchrgen
+              inir                      ; 4 x 256 bytes
+              nop
+              nop
+              inir
+              nop
+              nop
+              inir
+              nop
+              nop
+              inir
+              push hl
+              push bc
+              ld hl,(cgpbas)            ; cursor karakter ook bewaren!
+              ld de,255*8               ; positie
+              add hl,de
+              call setrd
+              pop bc
+              pop hl
+              ld b,8                    ; # bytes
+              inir
+
+              ld hl,(cgpbas)            ; schrijf kar. set
+              call setwrt
+              ld b,0
+              ld hl,(4)                 ; haal beginadres
+              otir
+              nop
+              nop
+              otir
+              nop
+              nop
+              otir
+              nop
+              nop
+              otir
+
+              ei
+
+              call enascr
+
+              ret
+
+
+; restmode
+;
+; herstel oude schermmode, als dat een grafisch scherm was.
+
+restmode      
+              ld a,(oldscrmod)          ; test screen mode
+              cp 2
+              ret c                     ; breek af als het 0 of 1 was
+
+              call disscr
+
+              ld hl,(cgpbas)            ; herstel straks 1kB character set
+              push hl
+
+              ld hl,(oldnambas)
+              ld (nambas),hl
+              ld hl,(oldcgpbas)
+              ld (cgpbas),hl
+              ld a,(oldlinlen)          ; herstel regellengte
+              ld (linlen),a
+              ld a,(oldscrmod)          ; herstelschermmode
+              ld (scrmod),a
+
+
+              pop hl
+              call setwrt
+              ld b,0
+              ld hl,oldchrgen
+              otir                      ; 4 x 256 bytes
+              nop
+              nop
+              otir
+              nop
+              nop
+              otir
+              nop
+              nop
+              otir
+              push hl
+              push bc
+              ld hl,(cgpbas)            ; herstel cursor
+              ld de,255*8               ; positie
+              add hl,de
+              call setwrt
+              pop bc
+              pop hl
+              ld b,8
+              otir
+              ei
+
+
+              ld hl,oldvdpregs
+              ld c,0
+restmloop     ld b,(hl)                 ; herstel VDP registers
+              push hl
+              push bc
+              call wrtvdp
+              pop bc
+              pop hl
+              inc hl                    ; volgende adres
+              inc c                     ; volgende register
+              ld a,8
+              cp c
+              jp nz,restmloop
+
+              ld hl,oldvdp2regs
+              ld c,8
+restnloop     ld b,(hl)                 ; herstel VDP registers
+              push hl
+              push bc
+              call wrtvdp
+              pop bc
+              pop hl
+              inc hl                    ; volgende adres
+              inc c                     ; volgende register
+              ld a,24
+              cp c
+              jp nz,restnloop
+
+              call enascr
+
+              ret                       ; terug
+
+
+oldscrmod     defb 0                    ; oude schermmode
+oldchrgen     defs 1024                 ; oude character generator
+oldcursor     defs 8                    ; oude cursor, might be messed with!
+oldvdpregs    defs 8                    ; oude VDP regs
+oldvdp2regs   defs 16                   ; oude vdp regs MSX 2
+oldnambas     defw 0                    ; oude name base
+oldcgpbas     defw 0
+oldlinlen     defb 0                    ; oude regellengte
+
+
+; chkputwin
+; NZ = tonen
+; bepaald of het window getoond moet worden
+
+chkputwin     ld a,(automode)
+              or a
+              ret z                     ; return als niet tonen
+
+              ld a,(newkey+keyoffset)   ; test op hotkey
+              and hotkeymask
+              sub 1                     ; Cy als hotkey actief
+              ld a,0
+              adc a,a                   ; NZ als hotkey actief
+              ret nz
+
+              ld a,(automode)           ; check automode
+              dec a                     ; 0: TROFF, kan hier niet.
+
+cpw_a1        or a
+              ret z                     ; 1: hot-key only
+
+cpw_a2        dec a                     ; 2: every line
+              jr nz,cpw_a3
+              ld a,(newlinflg)
+              or a                      ; NZ als nieuwe regel
+              ret
+
+cpw_a3        dec a                     ; 3: every statement
+              jr nz,cpw_a4
+              inc a                     ; zorg voor NZ
+              ret
+
+cpw_a4        dec a                     ; 4: full window
+              jr nz,cpw_a5
+              ld a,(linnrs+5)           ; past er nog een nummer bij?
+              cp ' '                    ; NZ als nee.
+              ret
+
+cpw_a5        dec a                     ; 5: at a Break point
+              jr nz,cpw_a6
+
+              ld hl,(curlin)
+              ld de,(break1)            ; check breakpoint 1
+              call cphlde
+              jr z,retnz
+              ld de,(break2)            ; check breakpoint 2
+              call cphlde
+              jr z,retnz
+              ld de,(break3)            ; check breakpoint 3
+              call cphlde
+              jr z,retnz
+              xor a                     ; zet Zero vlag
+              ret
+
+retnz         ld a,255                  ; keer terug met Non Zero
+              or a
+              ret
+
+cphlde        push hl                   ; vergelijk HL en DE
+              or a                      ; Cy=0
+              sbc hl,de
+              pop hl                    ; herstel HL
+              ret
+
+cpw_a6        
+              xor a                     ; zet Zero vlag
+              ret
+
+
+
+; chkclrwin
+; NZ = wissen
+; bepaald of het window gegewist kan worden
+
+chkclrwin     ld a,(automode)
+              cp 5
+              jr nz,ccw_a2
+
+ccw_a1        xor a                     ; at Breakpoint
+              ld hl,(break1)            ; is er wel een point gezet?
+              and h
+              and l
+              ld hl,(break2)
+              and h
+              and l
+              ld hl,(break3)
+              and h
+              and l                     ; a=255 als alle breaks clear
+              inc a
+              push af
+              call z,beep
+              pop af
+              ret z
+
+ccw_a2
+              ld a,1                    ; forceer non zero
+              or a
+              ret
+
+; putwindow
+; 
+; plaatst het window op het scherm
+
+putwindow     call clearwin             ; plaats schoon window
+              call putlinnrs            ; zet de regelnummers er in
+              call putcommands          ; vul de commandoregel in
+              call putoldtxt            ; schrijf text pointer
+              call putautomode          ; schrijf huidige auto mode
+              call putbreaks            ; schrijf breakpoints
+              ret
+
+
+; commando uitvoerder
+;
+;
+
+ifjump        macro @chr,@adres
+                cp @chr
+                jp z,@adres
+              endm
+
+docommand     call chkbuf               ; buffer leeg?
+              jp z,docommand            ; zo ja: blijf wachten
+
+              call chrget               ; haal karakter uit buffer
+
+              ifjump #1F,trydown        ; test op cursortoetsen
+              ifjump #1E,tryup
+              ifjump #1D,tryleft
+              ifjump #1C,tryright
+              ifjump #0B,movehome
+
+              cp 'a'                    ; kleinder dan a?
+              jr c,uppercase            ; zo ja: ok
+              cp 'z'+1                  ; groter dan/gelijk aan 'z'+1?
+              jr nc,uppercase           ; zo ja: ok
+              add a,'A'-'a'             ; vertaal onder- naar bovenkast
+
+uppercase     ifjump "D",display
+              ifjump #0D,display
+              ifjump "H",hotkeyonly
+              ifjump "L",everylin
+              ifjump "S",everystat
+              ifjump "C",doclear
+              ifjump #0C,doclear
+              ifjump "F",winful
+              ifjump "O",dotroff
+              ifjump "B",breakpnts
+
+              call chkclrwin            ; kan window weg?
+              jp z,docommand            ; zo nee: wacht op commando
+
+              ret
+
+; tryup, trydown, tryleft en tryright
+;
+; de vier move commando's
+
+tryup         ld a,(win_y)              ; kan het nog?
+              or a
+              jp z,docommand
+              positie win_h-1,0         ; herstel onderste regel
+              schrijf oldwindow+win_hw-win_w,win_w
+              ld hl,oldwindow+win_hw-1-win_w
+              ld de,oldwindow+win_hw-1
+              ld bc,win_hw-win_w
+              lddr
+              ld hl,win_y               ; pas y-coordinaat aan
+              dec (hl)
+              call tlcorner
+              positie 0,0               ; haal positie
+              vdplees oldwindow,win_w   ; bewaar bovenste regel
+              call putwindow            ; druk window opniew af
+              jp docommand
+
+trydown       ld a,(win_y)              ; kan het nog?
+              add a,win_h
+              ld b,a
+              ld a,(lincnt)
+              cp b
+              jp z,docommand
+              positie 0,0               ; herstel bovenste regel
+              schrijf oldwindow,win_w
+              ld hl,oldwindow+win_w     ; schuif bewaarde gebied
+              ld de,oldwindow
+              ld bc,win_hw-win_w
+              ldir
+              ld hl,win_y               ; pas y-coordinaat aan
+              inc (hl)
+              call tlcorner
+              positie win_h-1,0         ; haal positie
+              vdplees oldwindow+win_hw-win_w,win_w
+              call putwindow            ; druk window opniew af
+              jp docommand
+
+tryleft       ld a,(win_x)              ; kan het nog?
+              or a
+              jp z,docommand
+              positie 0,win_w-1         ; herstel kolom
+              ld de,oldwindow+win_w-1
+              call wrtcolumn
+              ld hl,oldwindow+win_hw-2  ; schuif bewaarde gebied
+              ld de,oldwindow+win_hw-1
+              ld bc,win_hw-1
+              lddr
+              ld hl,win_x               ; update x coordinaat
+              dec (hl)
+              call tlcorner
+              positie 0,0               ; bewaar kolom
+              ld de,oldwindow
+              call rdcolumn
+              call putwindow            ; druk af
+              jp docommand
+
+tryright      ld a,(win_x)              ; kan het nog?
+              add a,win_w
+              ld b,a
+              ld a,(vramlinlen)
+              cp b
+              jp z,docommand
+              positie 0,0               ; herstel kolom
+              ld de,oldwindow
+              call wrtcolumn
+              ld hl,oldwindow+1         ; schuif bewaarde gebied
+              ld de,oldwindow
+              ld bc,win_hw-1
+              ldir
+              ld hl,win_x               ; update x coordinaat
+              inc (hl)
+              call tlcorner
+              positie 0,win_w-1         ; bewaar kolom
+              ld de,oldwindow+win_w-1
+              call rdcolumn
+              call putwindow            ; druk af
+              jp docommand
+
+
+; wrtcolumn
+;
+; schrijft een kolom naar VRAM (HL vram adres, DE RAM adres)
+
+wrtcolumn     ld b,win_h                ; initialiseer teller
+wrtcloop      push bc
+              push hl
+              push de
+              call setwrt               ; init VDP
+              pop de
+              pop hl
+              ld a,(de)                 ; schrijf byte
+              out (c),a
+              ld bc,(vramlinlen)        ; update VRAM adres
+              add hl,bc
+              ex de,hl
+              ld bc,win_w               ; update RAM adres
+              add hl,bc
+              ex de,hl
+              pop bc
+              djnz wrtcloop
+              ret
+
+; rdcolumn
+;
+; leest een kolom naar VRAM (HL vram adres, DE RAM adres)
+
+rdcolumn      ld b,win_h                ; initialiseer teller
+rdcloop       push bc
+              push hl
+              push de
+              call setrd                ; init VDP
+              pop de
+              pop hl
+              in a,(c)
+              ld (de),a                 ; schrijf byte
+              ld bc,(vramlinlen)        ; update VRAM adres
+              add hl,bc
+              ex de,hl
+              ld bc,win_w               ; update RAM adres
+              add hl,bc
+              ex de,hl
+              pop bc
+              djnz rdcloop
+              ret
+
+movewin       push bc
+              call restvram
+              pop bc
+              ld a,(win_x)
+              add a,b
+              ld (win_x),a
+              ld a,(win_y)
+              add a,c
+              ld (win_y),a
+              call tlcorner             ; herbereken adres linker bovenhoek
+              call savevram
+              call putwindow            ; schrijf window
+              ret
+
+; movehome
+;
+; zet het window in de linker bovenhoek
+
+movehome      ld a,(win_x)              ; zijn we er al?
+              ld hl,win_y
+              or (hl)
+              jp z,docommand            ; zo ja: dan terug!
+              call restvram
+              xor a                     ; coordinaten op nul
+              ld (win_x),a
+              ld (win_y),a
+              call tlcorner             ; positie doorrekenen
+              call savevram
+              call putwindow
+              jp docommand
+
+; display
+;
+; schakelt tijdelijk terug naar originele scherm
+
+display       call restvram             ; herstel VRAM
+              call restmode             ; herstel mode
+              call chrget               ; wacht op toets
+              call savemode             ; terug naar tekstscherm
+              call putwindow            ; druk window af
+              jp docommand              ; volgende commando
+
+
+; hotkeyonly
+;
+; laat tracer alleen verschijnen als hotkey gezien wordt.
+
+hotkeyonly    ld a,1
+setautomode   ld (automode),a
+              call putwindow
+              jp docommand
+
+; everylin
+;
+; zorgt dat de tracer elke regel wordt aangeroepen
+
+everylin      ld a,2
+              jp setautomode
+
+
+; everystat
+;
+; zorgt dat de tracer elk commando wordt aangeroepen
+
+everystat     ld a,3
+              jp setautomode
+
+; winfull
+;
+; tracer verschijnt zodra window vol is
+
+winful        ld a,4
+              jp setautomode
+
+; doclear
+;
+; wist het window
+
+doclear       call clearnrs             ; bijvoorbeeld automode niet
+              call clearbreaks
+              call putwindow
+              jp docommand
+
+; dotroff
+;
+; voert O commando uit, automode 0, niet automatisch
+
+dotroff       xor a
+              jp setautomode
+
+
+; breakpnts
+;
+; zet automode op breakpoints
+
+breakpnts     ld a,5
+              jp setautomode
+
+; clearwin
+;
+; tekend een leeg window op het scherm
+
+clearwin      ld hl,(topleft)            ; bereken VRAM adres linker bovenh.
+              push hl
+              call setwrt               ; set VDP for write
+              ld a,#18                  ; linker bovenhoek
+              out (c),a
+              ld a,#17                  ; horizontale lijn
+              ld b,win_w-2
+              push bc
+              call vramwrite
+              pop bc
+              ld a,#19                  ; rechter bovenhoek
+              out (c),a
+              ei
+
+              pop hl
+              ld de,(vramlinlen)
+              add hl,de                 ; volgende regel
+
+              ld b,win_h-2
+clearloop     push bc
+              push hl
+              call setwrt               ; set vdp for write
+              ld a,#16                  ; vertikale lijn
+              out (c),a
+              push bc
+              ld a,' '
+              ld b,win_w-2
+              call vramwrite
+              pop bc
+              ld a,#16                  ; vertikale lijn
+              out (c),a
+              ei
+              pop hl
+              ld de,(vramlinlen)
+              add hl,de
+              pop bc
+              djnz clearloop
+
+              call setwrt               ; set VDP for write
+              ld a,#1A                  ; linker onderhoek
+              out (c),a
+              ld a,#17                  ; horizontale lijn
+              ld b,win_w-2
+              push bc
+              call vramwrite
+              pop bc
+              ld a,#1B                  ; rechter onderhoek
+              out (c),a
+              ei
+              ret
+
+
+; putlinnrs
+;
+; zet de regelnummers in het window
+
+putlinnrs     positie 1,1
+              ld b,lin_h
+              ld de,linnrs              ; regelnummersbuffer
+
+putloop1      push bc
+              push hl
+              call setwrt
+              ld b,win_w-2
+              ex de,hl
+              otir
+              ei
+              ex de,hl
+              pop hl
+              ld bc,(vramlinlen)        ; volgende regel
+              add hl,bc
+              pop bc
+              djnz putloop1
+              ret
+
+; putcommands
+;
+; zet commandoregel in window
+
+putcommands   positie win_h-3,1
+              push hl
+              schrijf cmdtext1,cmdtlen1
+              pop hl
+              ld de,(vramlinlen)
+              add hl,de
+              schrijf cmdtext2,cmdtlen2
+              ret
+
+cmdtext1      defb 'Clr Dsp'
+cmdtlen1      equ $-cmdtext1
+
+cmdtext2      defb 'Off Hot Ful Stm Lin Brk'
+cmdtlen2      equ $-cmdtext2
+
+; putbreaks
+;
+; zet breakpoints in window
+
+putbreaks     positie win_h-4,1
+              schrijf breakn1,breaklen
+              ret
+
+; clearbreaks
+;
+; initialiseert breakpoints
+
+clearbreaks   ld hl,65535
+              ld (break1),hl
+              ld (break2),hl
+              ld (break3),hl
+              ret
+
+breakn1       defb '[1]'                ; eerste breakpoint
+breakp1       defs 6,'-'
+              defb ' '
+breakn2       defb '[2]'                ; tweede breakpoint
+breakp2       defs 6,'-'
+              defb ' '
+breakn3       defb '[3]'                ; derde breakpoint
+breakp3       defs 6,'-'
+breaklen      equ $-breakn1
+
+break1        defw 65535
+break2        defw 65535
+break3        defw 999
+
+
+; putautomode
+;
+; schrijft automode in het window
+
+putautomode   ld hl,automodtab
+              ld a,(automode)
+putauto1      or a
+              jr z,putauto3
+              ld b,a
+              xor a                     ; a=0
+putauto2      inc hl                    ; zoek volgende 0
+              cp (hl)
+              jp nz,putauto2
+              ld a,b
+              dec a
+              inc hl
+              jp putauto1
+              ret
+
+putauto3      push hl
+              ld hl,win_h-5
+              ld de,(vramlinlen)        ; 8 bits valid!
+              call multHLDE
+              ld de,(topleft)
+              add hl,de
+              ld de,11                  ; elf naar rechts
+              add hl,de                 ; eentje naar rechts
+              call setwrt
+              pop hl
+
+putauto4      ld a,(hl)
+              or a
+              jr z,putauto5
+              out (c),a
+              inc hl
+              jp putauto4
+
+putauto5      ei
+              ret
+
+automodtab    defb 'auto mode Off',0
+              defb 'Hotkey only',0
+              defb 'Every Line',0
+              defb 'Every Statement',0
+              defb 'at Full window',0
+              defb 'at a Break point',0
+              defb 0,0,0,0,0,0,0,0,0    ; voor fail save
+; putoldtxt
+;
+; plaats oude text pointer in window.... (testdoeleinden)
+
+putoldtxt     ld hl,(oldtxt)
+              call hl2dec
+              positie win_h-5,1
+              schrijf decbuf,6
+              ret
+              
+
+; addlin
+;
+; regelnummer toevoegen aan lijst regelnummers
+
+addlin        ld hl,(curlin)            ; vertalen naar decimaal
+              call hl2dec
+              ld bc,6                   ; bepalen lengte
+              ld hl,decbuf-1
+              ld a,' '
+addlinl1      dec bc
+              inc hl
+              cp (hl)
+              jr z,addlinl1             ; er is nog een spatie
+
+              push hl                   ; bewaar begin decimale string
+              push bc                   ; bewaar lengte
+ 
+              ld hl,linnrs
+              add hl,bc
+              inc hl                    ; scheidingsteken
+              push hl
+              ld de,linnrs
+              ld hl,(win_w-2)*lin_h     ; lengte buffer
+              scf
+              sbc hl,bc                 ; lengte getal + scheidingsteken
+              ld b,h
+              ld c,l
+              pop hl
+              ldir                      ; schuif buffer door
+              ld a,'/'                  ; scheidingsteken
+              ld (de),a
+              inc de
+
+              pop bc
+              pop hl
+              ldir                      ; vul regelnummer in
+              ret
+
+
+; clearnrs
+;
+; wis de reeks regelnummers
+
+clearnrs      ld hl,linnrs
+              ld bc,(win_w-2)*lin_h-1
+              ld de,linnrs+1
+              ld (hl),' '               ; spatie...
+              ldir                      ; wis de hele zaak
+              ret
+
+; vramwrite
+;
+; schrijft reeks identieke bytes naar VRAM
+; b: teller, a: byte
+
+vramwrite     ld hl,7                   ; haal VRAM schrijf poort
+              ld c,(hl)
+vramwloop     out (c),a                 ; schrijf byte
+              djnz vramwloop            ; herhaal b bytes
+              ret
+
+; initmode
+;
+; vramlinlen initialiseren (we weten dat we op een tekstscherm zitten)
+
+initmode      ld a,(scrmod)
+              ld hl,vramlinlen
+              ld (hl),32                ; assume screen 1, 32 chars
+              cp 1
+              jr z,chkwinpos            ; inderdaad!
+              ld (hl),40                ; assume screen 0, 40 chars
+              ld a,(linlen)
+              cp 41
+              jr c,chkwinpos            ; inderdaad!
+              ld (hl),80                ; dan dus 80 karakters
+
+chkwinpos     ld a,(win_x)              ; valt window buiten scherm?
+              add a,win_w               ; positie rechter kolom
+              ld hl,vramlinlen
+              cp (hl)
+              jr c,tlcorner             ; nee? dan naar tlcorner
+              ld a,(hl)                 ; schuif naar links
+              sub win_w
+              ld (win_x),a              ; nieuwe x opslaan
+
+; tlcorner
+;
+; berekend postitie van top left corner
+
+tlcorner      ld d,0                    ; haal y coord in D
+              ld a,(win_y)
+              ld e,a
+              ld hl,(vramlinlen)
+              call multHLDE             ; vermenigvuldig in HL
+              ld d,0
+              ld a,(win_x)
+              ld e,a
+              add hl,de                 ; tel x coord op
+              ld de,(nambas)
+              add hl,de
+              ld (topleft),hl           ; bewaar voor andere routines
+              ret
+
+
+; multHLDE
+;
+; vermenigvuldig HL met DE
+
+multHLDE      push af                   ; bewaar registers
+              push bc
+              push de
+
+              ld b,h                    ; hl in bc
+              ld c,l
+              ld hl,0                   ; resultaat op 0
+              ld a,16                   ; initialiseer teller
+
+multloop      bit 0,c                   ; als het bit 1 is optellen
+              jr z,multover
+
+              add hl,de
+
+multover      srl b                     ; schuif BC naar links
+              rr c
+              sla e                     ; en DE naar rechts
+              rl d
+              dec a                     ; verlaag teleler
+              jr nz,multloop            ; 16 x herhalen              
+
+              pop de                    ; herstel registers
+              pop bc
+              pop af
+              ret
+
+
+; hl2dec
+;
+; vertaalt HL naar een decimaal getal in decbuf, geen voorloopnullen
+
+hl2dec        push de                   ; bewaar registers
+              push hl
+              push bc
+              push ix
+
+              ld ix,decbuf              ; pointer naar buffer
+              ld c,'0'                  ; filter voor voorloopnullen
+              ld de,10000               ; 10000-tallen
+              call trydigit
+              ld de,1000                ; 1000-tallen
+              call trydigit
+              ld de,100                 ; 100-tallen
+              call trydigit
+              ld de,10                  ; 10-tallen
+              call trydigit
+              ld c,0                    ; geen voorlopnul
+              ld de,1                   ; eenheden
+              call trydigit
+
+              pop ix                    ; herstel registers
+              pop bc
+              pop hl
+              pop de
+
+              ret
+
+; trydigit
+;
+; probeert DE-tallen van HL af te trekken, en bouwt zo een cijfer.
+
+trydigit      xor a                     ; a=0
+tryloop       add a,1
+              sbc hl,de                 ; probeer aftrekking
+              jr nc,tryloop             ; ging goed? herhalen!
+
+              add hl,de                 ; eentje te ver...
+              add a,'0'-1               ; bereken ASCII waarde
+              ld b,a
+              xor c                     ; filter voorloopnul
+              ld c,0                    ; neem aan geen voorloopnullen meer
+              jr nz,trynorm
+
+              ld b,' '                  ; leading zero
+              ld c,'0'
+
+trynorm       ld a,b                    ; gewoon cijfer
+              ld (ix),a
+              inc ix
+              ret                       ; terug
+
+decbuf        defs 5                    ; decimale buffer
+              defb 0                    ; afsluitende 0, voor ASCIIZ gebruik
+
+; setrd
+;
+; initialiseerd VDP voor lezen, poort in C, ints uit
+
+setrd         call nsetrd               ; BIOS routine
+              di                        ; interupts weer uit
+              ld c,0                    ; wordt ingevuld door initialisatie
+              ret
+
+vdpread       equ $-2                   ; adres voor leespoort
+
+
+; setwrt
+;
+; initialiseerd VDP voor schrijven, poort in C, ints uit
+
+setwrt        call nsetwrt              ; BIOS routine
+              di                        ; interupts weer uit
+              ld c,0                    ; wordt ingevuld door initialisatie
+              ret
+
+vdpwrite      equ $-2                   ; adres voor schrijfpoort
+
+
+; chrgtr
+;
+; lezen token uit Basic
+
+chrgtr        ld ix,#4666
+              jr basiccall
+
+
+; basiccall
+;
+; Aanroepen van subroutines in het Basic ROM (uitgeschakeld als TSR actief)
+
+basiccall     call 0                    ; wordt bij init ingevuld
+              ei
+              ret
+              
+
+; memManEntry
+;
+; Entry addres voor MemMan aanroepen
+
+memManEntry:  jp 0                      ; wordt ingevuld bij initialisatie
+
+
+; Definities Globale variabelen
+;
+;
+
+win_x         defb 7                    ; x en y coord window, zero based
+win_y         defb 7
+linnrs        defs (win_w-2)*lin_h      ; ruimte voor regelnummers
+oldcsrsw      defb 1                    ; oude cursor display switch
+oldcnsdfg     defb 1                    ; oude F-key mode
+
+lasttxt       defw 0                    ; current text pointer
+
+oldlin        defw 0                    ; laatste behandelde regel
+newlinflg     defb 1                    ; nieuwe regel
+
+vramlinlen    defb 0                    ; regellengte in VRAM
+              defb 0                    ; zodat LD DE,(VRAMLINLEN) werkt
+topleft       defw 0                    ; VRAM adres van linker bovenhoek
+
+automode      defb 2                    ; automode (default, every line)
+
+tsrLen        equ $-base                ; Length of TSR programcode
+
+
+;---------------------------------------;
+;     Init-code                         ;
+;---------------------------------------;
+
+init:         ld b,getMemManEnt         ; Ask for MemMan entry
+              ld de,256*'M' + info      ; Call the MemMan info function
+              call extBio               ; Through the ExtBio hook
+              ld (memManEntry+1),hl     ; Save the MemMan entry address
+
+              ld hl,tTsrName            ; Pointer to TSR name-string
+              memMan getTsrID           ; See if this TSR already exists
+              jr nc,initDouble          ; Yes, => Double installed error
+
+              ld b,4                    ; Basiccall
+              memMan info
+              ld (basiccall+1),hl       ; initialiseer
+
+
+              ld a,0                    ; Flags in A, no messages
+              ret                       ; Init ready, return to TsrLoad
+
+initDouble:   ld de,tDouble             ; DE=Text pointer
+              ld a,3                    ; Flags for TL: Print text & Abort
+              ret                       ; Return to TsrLoad
+
+
+tTsrName:     tsrname                   ; Macro for tsr-name string
+
+tDouble:      db 'This TSR is already ' ; Error text, 0-terminated
+              db 'installed',13,10,10,0
+
+iniLen        equ $-init                ; Length of init-code
+
+
+;---------------------------------------;
+;    Hook Table                         ;
+;---------------------------------------;
+
+hooks:        dw hokTabLen              ; Length of HokTab
+
+              dw h_news                 ; New Statement hook
+              dw exec_news
+
+              dw h_cmd                  ; CMD HOOK
+              dw exec_cmd
+
+hokTabLen     equ $-hooks               ; Length of hook-table
+
+
+;---------------------------------------;
+;     Einde Source                      ;
+;---------------------------------------;
+
+              end
+
+
