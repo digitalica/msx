@@ -1,0 +1,390 @@
+; MOUSOR by RWL, okt 1991
+;
+; Tsr frame file for GEN80 or M80 assemblers
+;
+
+; Macro definitions
+;
+tsrName	macro
+	  db "RWL MouSor  "       ;TSR ID-Name
+	endm
+;
+memMan	macro @fnc	;Macro for making MemMan
+	  ld e,@fnc	; function calls
+	  call memManEntry
+	endm
+
+
+;---------------------------------------;
+;    Header for the TSR file	;
+;---------------------------------------;
+;
+	db "MST TSR",13,10        ;TSR identifier
+	tsrName	;ID-Name
+	db 26	;^Z
+	dw 0002	;Header file versie, MemMan 2.2
+	dw base	;Code base address
+	dw init	;Init address
+	dw kill	;Kill address
+	dw talk	;TsrCall entry
+	dw tsrLen	;Programma code lengte
+	dw iniLen	;Init code lengte
+
+
+mouse	equ 2	; mouse 2 (b)
+
+stepx	equ 3	; stapgrootte x
+stepy	equ 5	; stapgrootte y
+
+gtstck	equ #00D5	; get stick routine
+gttrig	equ #00D8	; get trigger routine
+newpad	equ #00DB	; lees muis
+
+newkey	equ #FBE5	; new key pattern
+putpnt	equ #F3F8	; put pointer key buffer
+getpnt	equ #F3FA	; get pointer key buffer
+keybuf	equ #FBF0	; toetsenbord buffer
+repcnt	equ #F3F7	; repeat counter
+scncnt	equ #F3F6	; scan counter
+
+cup	equ %00000001
+cdown	equ %00000010
+cleft	equ %00000100
+cright	equ %00001000
+
+up	equ #1E	; cursor omhoog
+down	equ #1F	; cursor omlaag
+left	equ #1D	; cursor links
+right	equ #1C	; cursor rechts
+
+trig1	equ ' '                   ; spatiebalk
+
+trig2	equ 13	; return
+
+
+;---------------------------------------;
+;    Start of TSR-program code	;
+;---------------------------------------;
+;
+extBio	equ 0ffcah	;EXTBIO hook
+;
+hook	equ 0fd9fh	;Dummy: Hook to be bend by this TSR
+;
+info	equ 50	;MemMan function
+getMemManEnt	equ 6	;Info subfunction
+getTsrID	equ 62
+;
+
+;
+; TSR Base Address
+;
+base	equ $	;First byte of program code
+;
+kill:	ret	;No destruction routine
+;
+talk:	ret	;No driver routine
+
+; exec_mousor
+;
+; aan interrupt hook, check mouse
+
+exec_mousor:	push af
+	push bc
+	push de
+	push hl
+
+; initialiseer locale defaults
+
+	;ld a,(lgscncnt)	 ; laatste globale scan count
+	;ld hl,(scncnt)	 ; huidige scan counter
+	;ld b,(hl)	 ; in b
+	;cp b	 ; laatste - huidige
+	;jp nc,initldo1	 ; if laatste>=huidige
+	;ld a,(hl)	 ; hij is geinitialiseerd!
+	;ld (ldscncnt),a	 ; zet locale default
+initldo1	;ld a,b	 ; bewaar scan counter
+	;ld (lgscncnt),a
+
+	;ld a,(lgrepcnt)	 ; laatste globale repeat count
+	;ld hl,(repcnt)	 ; huidige repeat counter
+	;ld b,(hl)	 ; in b
+	;cp b	 ; laatste - huidige
+	;jp nc,initldo2	 ; if laatste>=huidige
+	;ld a,(hl)	 ; hij is geinitialiseerd!
+	;ld (ldrepcnt),a	 ; zet locale default
+initldo2	;ld a,b	 ; bewaar repeat counter
+	;ld (lgrepcnt),a
+
+; check scan counter mouse
+
+	ld hl,mcount	; moeten we actief worden?
+	dec (hl)
+	jp nz,trgcount	; zo nee: test triggers
+	ld a,(mdcount)	; opnieuw initialiseren
+	ld (hl),a
+	call scanmouse	; scan mouse
+
+; check scan counter triggers
+
+trgcount	ld hl,lscncnt	; moeten we actief worden?
+	dec (hl)
+	jp nz,endprogram	; zo nee: exit
+	ld a,(ldscncnt)	; initialiseer
+	ld (hl),a
+
+; scan triggers
+
+	call scantrg
+
+; doe auto repeat
+
+	ld hl,(getpnt)
+	ld a,(putpnt)
+	cp l	; nog char's in buffer?
+	jp nz,endprogram	; zo ja: geen repeat
+
+	ld hl,lrepcnt	; klaar om te herhalen?
+	dec (hl)
+	jp nz,endprogram	; zo nee: einde
+
+	ld a,1	; stel `korte' repeat in
+	ld (hl),a
+	ld hl,0
+	ld (ostrig1),hl
+
+	call trgtobuf	; zet toetsen in buffer (if valid)
+
+endprogram:	pop hl	; herstel registers
+	pop de
+	pop bc
+	pop af
+
+	ex af,af'                 ;Save AF
+	ld a,0	;Reset flags for TsrManager
+	ex af,af'                 ;Restore AF, flags to A'
+	ret	;Return to TsrManager
+
+; scantrg & trgtobuf
+;
+; 
+
+scantrg	ld a,mouse	; lees trigger 1
+	call gttrig
+	ld (strig1),a
+
+	ld a,mouse+2	; lees trigger 2
+	call gttrig
+	ld (strig2),a
+
+; stel auto-repeat in als anders dan vorige keer
+
+	ld hl,(strig1)
+	ld de,(ostrig1)
+	xor a	; Cy=0
+	sbc hl,de
+	jp z,trgtobuf
+
+; stel lange repeat in
+
+setrepcnt	ld a,(ldrepcnt)
+	ld (lrepcnt),a
+
+; zet huidige trigger gegevens in toetsenbuffer
+
+trgtobuf
+
+trigger1	ld a,(ostrig1)
+	ld hl,strig1
+	xor (hl)
+	and (hl)	; net ingedrukt?
+	jp z,trigger2
+	ld b,trig1	; vervangende toetscode
+	call nz,putbuf
+
+
+; dan trigger 2
+
+trigger2	ld a,(ostrig2)
+	ld hl,strig2
+	xor (hl)
+	and (hl)	; net ingedrukt?
+	jp z,copytrg
+	ld b,trig2	; vervangende toetscode
+	call nz,putbuf
+
+; tenslotte instelling naar oude kopieren
+
+copytrg	ld hl,(strig1)	; beide triggers
+	ld (ostrig1),hl
+
+	ret	; terug
+
+; scanmouse
+;
+;
+
+scanmouse	ld a,mouse*4+8	; stel poort in
+	call newpad	; lees muis
+	ld a,mouse*4+8+1
+	call newpad	; haal x
+	ld (mousex),a
+	ld a,mouse*4+8+2
+	call newpad	; haal y
+	ld (mousey),a
+
+	ld hl,mousex	; beide 0?
+	or (hl)
+	jr nz,scanmx
+	ld hl,0	; ja, muis ligt stil
+	ld (cmousex),hl
+	ret
+
+scanmx	ld a,(cmousex)
+	ld hl,mousex
+	ld c,stepx
+	add a,(hl)
+	jp m,negx
+posx	ld b,right
+	call domouse
+	ld (cmousex),a
+	jp scanmy
+negx	neg
+	ld b,left
+	call domouse
+	neg
+	ld (cmousex),a
+
+scanmy	ld a,(cmousey)
+	ld hl,mousey
+	ld c,stepy
+	add a,(hl)
+	jp m,negy
+posy	ld b,down
+	call domouse
+	ld (cmousey),a
+	ret
+negy	neg
+	ld b,up
+	call domouse
+	neg
+	ld (cmousey),a
+	ret
+
+; domouse
+;
+; zet zo vaak als nodig toets b in buffer, a muiswaarde, c stap.
+
+domouse	cp c	; a>stap?
+	ret c	; zo nee: terug
+	sub c	; anders aftrekken
+	push bc
+	call putbuf
+	pop bc
+	jp domouse	; probeer nog eens
+
+
+
+; putbuf
+;
+; zet karakter b in toetsenbuffer, E wordt niet beinvloed
+
+putbuf	push af	; bewaar registers
+	push de
+
+	ld hl,(putpnt)	; haal putpointer
+	ld (hl),b	; sla karakter alvast op
+	inc hl	; verhoog putpointer
+	ld a,#18	; buiten buffer?
+	cp l
+	jr nz,putbufover
+	ld hl,keybuf	; zo ja: dan naar begin
+putbufover	ld a,(getpnt)	; buffer vol?
+	cp l
+	jr z,putbufout	; zo ja: exit
+	ld (putpnt),hl	; zo nee: bewaar putpointer
+
+putbufout	pop de
+	pop af
+	ret
+
+mcount	defb 4	; scan counter mouse
+mdcount	defb 4	; scan counter mouse default
+
+lscncnt	defb 1	; locale scan counter
+lrepcnt	defb 1	; locale repeat counter
+
+ldscncnt	defb 2	; locale scan default
+ldrepcnt	defb 13	; locale repeat default
+
+lgscncnt	defb 255	; laatste globale scncnt
+lgrepcnt	defb 255	; laatste globale repcnt
+
+
+strig1	defb 0
+strig2	defb 0
+
+ostrig1	defb 0
+ostrig2	defb 0
+
+
+mousex	defb 0	; muis verplaatsing
+mousey	defb 0
+
+cmousex	defb 0	; cummulatieve verplaatsing muis
+cmousey	defb 0
+
+omousex	defb 0	; laatste verplaatsing muis
+omousey	defb 0
+
+; memManEntry
+;
+; Entry address for MemMan function calls
+;
+memManEntry:	jp 0	;Address filled in by init routine
+
+tsrLen	equ $-base	;Length of TSR programcode
+
+
+;---------------------------------------;
+;     Init-code	;
+;---------------------------------------;
+;
+init:	ld b,getMemManEnt	;Ask for MemMan entry
+	ld de,256*'M' + info      ;Call the MemMan info function
+	call extBio	;Through the ExtBio hook
+	ld (memManEntry+1),hl	;Save the MemMan entry address
+
+	ld hl,tTsrName	;Pointer to TSR name-string
+	memMan getTsrID	;See if this TSR already exists
+	jr nc,initDouble	; Yes, => Double installed error
+
+	ld a,0	;Flags in A, no messages
+	ret	;Init ready, return to TsrLoad
+
+initDouble:	ld de,tDouble	;DE=Text pointer
+	ld a,3	;Flags for TL: Print text & Abort
+	ret	;Return to TsrLoad
+
+;
+tTsrName:	tsrName	;Macro for tsr-name string
+;
+tDouble:	db 'This TSR is already ' ;Error text, 0-terminated
+	db 'installed',13,10,10,0
+;
+iniLen	equ $-init	;Length of init-code
+;
+;---------------------------------------;
+;    Hook Table	;
+;---------------------------------------;
+;
+hooks:	dw hokTabLen	;Length of HokTab
+	dw #FD9F	; H.TIMI (Timer Interupt)
+	dw exec_mousor
+;
+hokTabLen	equ $-hooks	;Length of hook-table
+;
+;---------------------------------------;
+;
+	end	;TSRFRAME
+;
+
