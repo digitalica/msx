@@ -1,0 +1,938 @@
+
+; Dit is een stopwatch voor MSX computers
+; gebasseerd op de klokfrequentie:
+; 3.579545 MHz,  1 WAIT in M1.
+;
+; door RWL, oktober 1988
+
+; Alle tijden van subroutines
+; inclusief RETURN en CALL!!!
+
+
+START	equ #C000
+BIN_ID	equ #FE
+
+TXTNAM	equ #F3B3	; name table
+TXTCGP	equ #F3B7	; graph table
+LINL40	equ #F3AE	; line length
+SCRNMOD	equ #FCAF
+FNKSWI	equ #FBCD
+
+INITXT	equ #006C	; init 40x24
+CHGMOD	equ #005F	; set scr mode
+KILLBUF	equ #0156	; clears k-buffer
+CLS	equ #00C3
+PUTCHAR	equ #00A2	; print char
+GETCHAR	equ #009F	; read char
+ERAFNK	equ #00CC
+BREAKX	equ #00B7	; Cy=1 on CTRL-STOP
+
+	defb BIN_ID
+	defw BEGIN
+	defw EINDE
+	defw BEGIN
+
+	org START
+
+BEGIN	jp MAIN
+
+INIT	ld a,(FNKSWI)
+	ld (OLDFUNK),a
+	call ERAFNK
+	ld a,(SCRNMOD)
+	ld (OLDSCRN),a
+	ld a,(LINL40)
+	ld (OLDLLEN),a
+	ld hl,0
+	ld (TXTNAM),hl
+	ld hl,2048
+	ld (TXTCGP),hl
+	ld a,40
+	ld (LINL40),a
+	call INITXT	; zet scherm
+	ld hl,TIMERS
+	ld bc,4*8-1+3
+	ld de,TIMERS+1
+	ld (hl),'0'
+	ldir		; Timers op '0'
+	xor a
+	ld (CODEOLD),a
+	ld (GRPHOLD),a
+	ld (RUNNING),a
+	ld (LRESET),a
+	ld (GRESET),a
+	ld (HALTED),a
+	ld (DISPCNT),a
+	dec a
+	ld (SHOWLAP),a
+	ld a,'1'
+	ld (LPCOUNT),a
+	ret
+
+; TIMER: 1 byte: Honderdste sec
+;	 1 byte: Tiende sec
+;	 1 byte: sec
+;	 1 byte: Tiental. sec
+;	 1 byte: min
+;	 1 byte: Tiental. min
+;	 1 byte: uren
+;	 1 byte: Tiental. uren
+
+TIMERS
+M1TIMER	defs 8	; Main timer
+M2TIMER	defs 8	; Main timer screen
+L1TIMER	defs 8	; Lap timer
+L2TIMER	defs 8	; Lap timer screen
+LPCOUNT	defs 3	; Lap counter
+
+OLDSCRN	defb 0	; old scr mode
+OLDLLEN	defb 0	; old lin width
+OLDFUNK	defb 0	; old function disp.
+
+CODEOLD	defb 0	; was CODE gedrukt?
+CODEKEY	defb 0
+
+GRPHOLD	defb 0	; was GRAPH gedrukt?
+GRPHKEY	defb 0
+
+RUNNING	defb 0	; running flag
+SHOWLAP	defb 0	; lap time flag
+
+GRESET	defb 0	; General reset
+LRESET	defb 0	; Lap reset
+HALTED	defb 0	; Gestopt?
+OUTZERO	defb 0	; Stoppen?
+
+DISPCNT	defb 0	; knipperteller
+
+; input: HL
+; output:
+; wijzigd: AF
+
+SETWRT	ld a,l
+	out (#99),a
+	ld a,h
+	and %00111111
+	or %01000000
+	out (#99),a
+	ret
+
+
+; input:
+; ouput:
+; wijzigd:
+
+PRTPICT	ld hl,0
+	call SETWRT
+	ld b,5
+	ld a,#20
+PPLOOP5	out (#98),a
+	nop
+	djnz PPLOOP5
+	ld hl,PICTURE
+	ld b,22
+PPLOOP2	push bc
+	ld b,19
+PPLOOP1	ld a,(hl)
+	out (#98),a
+	inc hl
+	djnz PPLOOP1
+	ld b,21
+	ld a,#20
+PPLOOP3	out (#98),a
+	nop
+	djnz PPLOOP3
+	pop bc
+	djnz PPLOOP2
+	ld b,75
+	ld a,#20
+PPLOOP4	out (#98),a
+	nop
+	djnz PPLOOP4
+	ret
+
+
+PICTURE	defb #20,#20,'C','O','D','E',#20,#20,#20,#20,#20,#20,#20,'G','R','A','P','H',#20
+	defb #20,#20,#18,#17,#17,#19,#20,#20,#20,#20,#20,#20,#20,#18,#17,#17,#19,#20,#20
+	defb #20,#20,#1A,#19,#18,#1B,#20,#20,#20,#20,#20,#20,#20,#1A,#19,#18,#1B,#20,#20
+	defb #20,#18,#17,#11,#11,#17,#17,#17,#17,#17,#17,#17,#17,#17,#11,#11,#17,#19,#20
+	defb #20,#16,#20,'L','A','P',#20,#20,#20,#20,#20,#20,'S','T','A','R','T',#16,#20
+	defb #18,#1B,'R','E','S','E','T',#20,#20,#20,#20,#20,'S','T','O','P',#20,#1A,#19
+	defb #16,#18,#17,#17,#17,#17,#17,#17,#17,#17,#17,#17,#17,#17,#17,#17,#17,#19,#16
+	defb #16,#16,'L','A','P',#20,'0','0',':','0','0',':','0','0',',','0','0',#16,#16
+	defb #16,#16,#20,#20,#20,#20,#20,#20,#20,#20,#20,#20,#20,#20,#20,#20,#20,#16,#16
+	defb #16,#16,'0','0','1',#20,'0','0',':','0','0',':','0','0',',','0','0',#16,#16
+	defb #16,#1A,#17,#17,#17,#17,#17,#17,#17,#17,#17,#17,#17,#17,#17,#17,#17,#1B,#16
+	defb #1A,#19,#20,#20,#20,#20,#20,#20,#20,#20,#20,#20,#20,#20,#20,#20,#20,#18,#1B
+	defb #20,#16,#20,#20,#20,'1','/','1','0','0',#20,'s','e','c',#20,#20,#20,#16,#20
+	defb #20,#16,#20,#20,#20,'d','u','a','l',#20,'t','i','m','e',#20,#20,#20,#16,#20
+	defb #20,#16,#20,#20,#20,'3','2',#20,'m','e','m','o','r','y',#20,#20,#20,#16,#20
+	defb #20,#1A,#19,#20,#20,#20,#20,#20,#20,#20,#20,#20,#20,#20,#20,#20,#18,#1B,#20
+	defb #20,#20,#16,#20,#20,'d','o','o','r',':',#20,'R','W','L',#20,#20,#16,#20,#20
+	defb #20,#20,#16,#20,#20,#20,'M','S','X',#20,'1','&','2',#20,#20,#20,#16,#20,#20
+	defb #20,#20,#16,#20,#20,#20,#20,#20,#20,#20,#20,#20,#20,#20,#20,#20,#16,#20,#20
+	defb #20,#20,#1A,#17,#17,#12,#17,#17,#17,#17,#17,#17,#17,#12,#17,#17,#1B,#20,#20
+	defb #20,#20,#20,#20,#20,#16,#20,#20,#20,#20,#20,#20,#20,#16,#20,#20,#20,#20,#20
+	defb #20,#20,#20,#20,#20,#1A,#17,#17,#17,#17,#17,#17,#17,#1B,#20,#20,#20,#20,#20
+
+
+
+SEC	call TSEC
+	ret z
+	call TSEC
+	ret z
+	call TSEC
+	ret z
+	call TSEC
+	ret z
+	call TSEC
+	ret z
+	call TSEC
+	ret z
+	call TSEC
+	ret z
+	call TSEC
+	ret z
+	call TSEC
+	ret z
+	call TSEC
+	ret
+
+TSEC	call HSEC
+	ret z
+	call HSEC
+	ret z
+	call HSEC
+	ret z
+	call HSEC
+	ret z
+	call HSEC
+	ret z
+	call HSEC
+	ret z
+	call HSEC
+	ret z
+	call HSEC
+	ret z
+	call HSEC
+	ret z
+	call HSEC
+	ret
+
+; input: hl, e
+; out: e = 1 als klokje rond
+; wijzigd: af, de, (hl)..(hl+7)
+; tijd: 8*108+8*(7+1)+27=955 Cycli
+
+INCTIME	call INCDIG9	; H sec
+	inc hl
+	call INCDIG9	; T sec
+	inc hl
+	call INCDIG9	; sec
+	inc hl
+	call INCDIG6	; T sec
+	inc hl
+	call INCDIG9	; min
+	inc hl
+	call INCDIG6	; T min
+	inc hl
+	call INCDIG9	; uur
+	inc hl
+	call INCDIG9	; uur
+	ret
+
+; input: hl, e
+; out: e = 1 als klokje rond
+; wijzigd: af, de, (hl)..(hl+2)
+; tijd:
+
+INCLCNT	call INCDIG9	; eenh
+	inc hl
+	call INCDIG9	; tient
+	inc hl
+	call INCDIG9
+	ret
+
+
+; input: hl en e
+; output: e voor volgende digit
+; veranderd: af, de, (hl)
+; Tijd: 79+29=108 Cycli
+
+INCDIG9	ld a,(hl) ; 7+1
+	add a,e	  ; 4+1
+	ld e,0	  ; 7+1
+	cp '9'+1  ; 7+1
+	ccf	  ; 4+1
+	ld d,a	  ; 4+1
+	ld a,e	  ; 4+1
+	sbc a,a	  ; 4+1
+	rl e	  ; 8+1
+	and -10	  ; 7+1
+	add a,d	  ; 4+1
+	ld (hl),a ; 7+1
+	ret
+
+; input: hl en e
+; output: e voor volgende digit
+; veranderd: af, de, (hl)
+; tijd: 79+29=108 Cycli
+
+INCDIG6	ld a,(hl)
+	add a,e
+	ld e,0
+	cp '5'+1
+	ccf
+	ld d,a
+	ld a,e
+	sbc a,a
+	rl e
+	and -6
+	add a,d
+	ld (hl),a
+	ret
+
+; input: hl en bc
+; output: geen
+; wijzigd: af,bc,de,hl en (VRAM)
+; tijd: 380+29=409 Cycli
+
+PRTTIME	ld de,7
+	add hl,de	; laatste byte
+	ld a,c
+	out (#99),a	; low byte
+	ld a,b
+	and %00111111
+	or %01000000	; write
+	out (#99),a	; high byte
+	ld a,(hl)
+	dec hl
+	out (#98),a
+	ld a,(hl)
+	dec hl
+	nop
+	out (#98),a	; uren
+	ld a,':'
+	ld a,':'
+	nop
+	out (#98),a	; ':'
+	ld a,(hl)
+	dec hl
+	nop
+	out (#98),a
+	ld a,(hl)
+	dec hl
+	nop
+	out (#98),a	; minuten
+	ld a,':'
+	ld a,':'
+	nop
+	out (#98),a	; ':'
+	ld a,(hl)
+	dec hl
+	nop
+	out (#98),a
+	ld a,(hl)
+	dec hl
+	nop
+	out (#98),a	; seconden
+	ld a,','
+	ld a,','
+	nop
+	out (#98),a	; ','
+	ld a,(hl)
+	dec hl
+	nop
+	out (#98),a
+	ld a,(hl)
+	dec hl
+	nop
+	out (#98),a	; honderdsten
+	ret
+
+; input: hl en bc
+; output: geen
+; wijzigd: af,bc,de,hl en (VRAM)
+; tijd: 167+29=176 Cycli
+
+PRTLCNT	ld de,2
+	add hl,de	; laatste byte
+	ld a,c
+	out (#99),a	; low byte
+	ld a,b
+	and %00111111
+	or %01000000	; write
+	out (#99),a	; high byte
+	ld a,(hl)
+	dec hl
+	out (#98),a	; h-tal
+	ld a,(hl)
+	dec hl
+	nop
+	out (#98),a	; t-tal
+	ld a,(hl)
+	ld a,(hl)
+	nop
+	out (#98),a	; eenh.
+	ret
+
+; input: hl, e
+; output: (hl)
+; wijzigd: af,hl,e
+; tijd: 238+29=267 Cycli
+
+CLRTIME	ld a,e		; e=CLEAR
+	cpl
+	or %00110000
+	ld e,a
+	ld a,(hL)
+	and e
+	ld (hl),a
+	inc hl
+	ld a,(hL)
+	and e
+	ld (hl),a
+	inc hl
+	ld a,(hL)
+	and e
+	ld (hl),a
+	inc hl
+	ld a,(hL)
+	and e
+	ld (hl),a
+	inc hl
+	ld a,(hL)
+	and e
+	ld (hl),a
+	inc hl
+	ld a,(hL)
+	and e
+	ld (hl),a
+	inc hl
+	ld a,(hL)
+	and e
+	ld (hl),a
+	inc hl
+	ld a,(hL)
+	and e
+	ld (hl),a
+	ret
+
+
+; input: hl, e
+; output: (hl)
+; wijzigd: af,hl,de
+; tijd: 122+29=151 Cycli
+
+CLRLCNT	ld a,e		; e=CLEAR
+	cpl
+	or %00110000
+	ld e,a
+	cpl
+	and 1
+	ld d,a
+	ld a,(hl)
+	and e
+	or d
+	ld (hl),a
+	inc hl
+	ld a,(hl)
+	and e
+	ld (hl),a
+	inc hl
+	ld a,(hl)
+	and e
+	ld (hl),a
+	ret
+
+; input: geen
+; output: (_OLD) en (_KEY)
+; wijzigd: af, de, (_OLD), (_KEY)
+; tijd: 261+29=290 Cycli
+
+GETKEY	in a,(#AA)
+	and %11110000
+	or %00000110
+	out (#AA),a
+	in a,(#A9)
+	ld e,0
+	rra		; SHIFT
+	rra		; CTRL
+	rra		; GRAPH
+	rl e
+	rra		; CAPS
+	rra		; CODE
+	rl e
+	ld a,(CODEOLD)
+	cpl
+	ld d,a
+	xor a
+	rr e
+	ccf
+	sbc a,a		; a=CODE
+	ld (CODEOLD),a
+	and d
+	ld (CODEKEY),a
+	ld a,(GRPHOLD)
+	cpl
+	ld d,a
+	xor a
+	rr e
+	ccf
+	sbc a,a		; a=CODE
+	ld (GRPHOLD),a
+	and d
+	ld (GRPHKEY),a
+	ret
+
+; input: hl,bc en e
+; output: (bc)
+; wijzigd: af,hl,bc
+; tijd: 258+29=287 Cycli
+
+MOVTIME	ld a,b
+	sub h
+	and e
+	add a,h
+	ld b,a
+	ld a,c
+	sub l
+	and e
+	add a,l
+	ld c,a
+	ld a,(hl)
+	ld (bc),a	; H
+	inc hl
+	inc bc
+	ld a,(hl)
+	ld (bc),a	; T
+	inc hl
+	inc bc
+	ld a,(hl)
+	ld (bc),a	; S
+	inc hl
+	inc bc
+	ld a,(hl)
+	ld (bc),a	; T
+	inc hl
+	inc bc
+	ld a,(hl)
+	ld (bc),a	; M
+	inc hl
+	inc bc
+	ld a,(hl)
+	ld (bc),a	; T
+	inc hl
+	inc bc
+	ld a,(hl)
+	ld (bc),a	; U
+	inc hl
+	inc bc
+	ld a,(hl)
+	ld (bc),a	; T
+	ret
+
+
+
+; input: geen;
+; output: (RUNNING) en (SHOWLAP)
+; wijzigd: af, hl, (RUNNING), (SHOWLAP)
+; tijd:
+
+SETMODE	ld a,(RUNNING)
+	ld hl,SHOWLAP
+	xor (hl)
+	cpl
+	ld (OUTZERO),a	; OUTZERO als straks stil
+
+	ld a,(RUNNING)
+	cpl
+	ld hl,SHOWLAP
+	and (hl)
+	ld hl,CODEKEY
+	and (hl)
+	ld (GRESET),a
+
+	ld a,(SHOWLAP)
+	ld hl,CODEKEY
+	and (hl)
+	ld (LRESET),a
+
+	ld a,(SHOWLAP)
+	cpl
+	ld hl,RUNNING
+	or (hl)
+	ld hl,CODEKEY
+	and (hl)
+	ld hl,SHOWLAP
+	xor (hl)
+	ld (SHOWLAP),a
+	ld a,(GRPHKEY)
+	ld hl,RUNNING
+	xor (hl)
+	ld (RUNNING),a
+
+	ld a,(RUNNING)
+	cpl
+	ld hl,SHOWLAP
+	and (hl)
+	ld hl,OUTZERO
+	and (hl)
+	cpl
+	ld (OUTZERO),a
+
+	ret
+
+; input: (DISPCNT)
+; output: scherm
+; wijzigd: af, e
+; tijd: 210+29=239 Cycli
+
+PRTLAP	ld a,(DISPCNT)
+	rlca
+	and 1
+	dec a
+	ld e,a
+	ld a,(SHOWLAP)
+	or e
+	ld e,a
+	ld a,c
+	out (#99),a	; low byte
+	ld a,b
+	and %00111111
+	or %01000000	; write
+	out (#99),a	; high byte
+	ld a,'L'-' '
+	and e
+	add a,' '
+	out (#98),a
+	ld a,'A'-' '
+	and e
+	add a,' '
+	out (#98),a
+	ld a,'P'-' '
+	and e
+	add a,' '
+	out (#98),a
+	ret
+
+; input:
+; output:
+; wijzigd:
+; tijd:
+
+INCTIMS	ld hl,M1TIMER
+	ld a,(RUNNING)
+	and 1
+	ld e,a
+	call INCTIME	; inc MAIN timer
+	ld hl,L1TIMER
+	ld a,(RUNNING)
+	and 1
+	ld e,a
+	call INCTIME	; inc LAP timer
+	ld a,(GRESET)
+	cpl
+	ld hl,SHOWLAP
+	and (hl)
+	ld hl,CODEKEY
+	and (hl)
+	and 1
+	ld e,a
+	ld hl,LPCOUNT
+	call INCLCNT	; inc LAP counter
+	ret
+
+; input:
+; output:
+; wijzigd:
+; tijd:
+
+MOVTIMS	ld hl,M1TIMER
+	ld bc,M2TIMER
+	ld a,(SHOWLAP)
+	ld e,a
+	call MOVTIME	; move MAIN timer
+	ld hl,L1TIMER
+	ld bc,L2TIMER
+	ld a,(SHOWLAP)
+	ld e,a
+	call MOVTIME	; move LAP timer
+	ret
+
+; input:
+; output:
+; wijzigd:
+; tijd:
+
+CLRTIMS	ld a,(LRESET)
+	ld hl,GRESET
+	or (hl)
+	ld hl,L1TIMER
+	ld e,a
+	call CLRTIME	; clear LAP
+	ld a,(GRESET)
+	ld hl,M1TIMER
+	ld e,a
+	call CLRTIME	; clear MAIN
+	ld a,(GRESET)
+	ld hl,LPCOUNT
+	ld e,a
+	call CLRLCNT	; clear LAP COUNT
+	ret
+
+; input:
+; output:
+; wijzigd:
+; tijd:
+
+PRTTIMS	ld hl,M2TIMER
+	ld bc,9*40+11
+	call PRTTIME	; prt MAIN timer
+	ld hl,L2TIMER
+	ld bc,7*40+11
+	call PRTTIME	; prt LAP timer
+	ld hl,DISPCNT
+	inc (hl)
+	ld bc,7*40+7
+	call PRTLAP	; prt LAP switch
+	ld bc,9*40+7
+	ld hl,LPCOUNT
+	call PRTLCNT	; prt LAP count
+	ret
+
+; input:
+; ouput:
+; wijzigd:
+; tijd:
+
+WAIT	ret
+
+; input: Geen
+; output: Zero
+; wijzigd: Alles
+; tijd:
+
+HSEC	call WAIT
+	call GETKEY
+	call SETMODE
+	call CLRTIMS
+	call INCTIMS
+	call MOVTIMS
+	call PRTTIMS
+	ld a,(OUTZERO)
+	or a
+	ret
+
+; input
+; output
+; wijzigd
+
+PRTTEXT	call SETWRT
+	di
+PRTLOOP	ld a,(de)
+	or a
+	ret z
+	out (#98),a
+	inc de
+	jp PRTLOOP
+
+; input
+; output
+; wijzigd
+
+PRTMENU	ld hl,40*3+26
+	ld de,MENTXT1
+	call PRTTEXT
+	ld hl,40*7+26
+	ld de,MENTXT2
+	call PRTTEXT
+	ld hl,40*11+26
+	ld de,MENTXT3
+	call PRTTEXT
+	ld hl,40*15+26
+	ld de,MENTXT4
+	call PRTTEXT
+	ld hl,40*19+26
+	ld de,MENTXT5
+	call PRTTEXT
+	ret
+
+MENTXT1	defb "ESC: Info Page",0
+MENTXT2	defb "'Q': Quit",0
+MENTXT3	defb "'M': Memory",0
+MENTXT4	defb "'P': Print Mem",0
+MENTXT5	defb "'S': Stopwatch",0
+
+; input
+; output
+; wijzigd
+
+CLRMENU	ld hl,40*3+26
+	ld c,5
+CLLOOP2	call SETWRT
+	di
+	ld a,' '
+	ld b,14
+CLLOOP1	out (#98),a
+	djnz CLLOOP1
+	ld de,40*4
+	add hl,de
+	dec c
+	jp nz,CLLOOP2
+	ret
+
+
+
+	ld de,MENTXT1
+	call PRTTEXT
+	ld hl,40*7+26
+	ld de,MENTXT2
+	call PRTTEXT
+	ld hl,40*11+26
+	ld de,MENTXT3
+	call PRTTEXT
+	ld hl,40*15+26
+	ld de,MENTXT4
+	call PRTTEXT
+	ld hl,40*19+26
+	ld de,MENTXT5
+	call PRTTEXT
+	ret
+
+
+MAIN	call INIT
+	call HELPPAG
+	di
+	call PRTMENU
+	jp MLOOP2
+
+MAINGO	call CLRMENU
+MLOOP1	call HSEC
+	jp nz,MLOOP1
+	call PRTMENU
+
+	xor a
+	ld (CODEOLD),a
+	ld (GRPHOLD),a
+
+MLOOP2	ld b,9
+MLOOP3	in a,(#AA)
+	and %11110000
+	dec b
+	or b
+	inc b
+	out (#AA),a
+	in a,(#A9)
+	inc a
+	jp nz,MLOOP2
+	djnz MLOOP3	; geen toets meer
+
+MLOOP4	in a,(#AA)
+	and %11110000
+	or %00000111
+	out (#AA),a
+	in a,(#A9)
+	and %00000100
+	jp z,H_PRESS	; Help
+
+	in a,(#AA)
+	and %11110000
+	or %00000100
+	out (#AA),a
+	in a,(#A9)
+	and %01000000
+	jp z,MAINOUT	; Quit
+
+	in a,(#AA)
+	and %11110000
+	or %00000100
+	out (#AA),a
+	in a,(#A9)
+	and %00000100
+	jp z,M_PRESS	; Memory
+
+	in a,(#AA)
+	and %11110000
+	or %00000100
+	out (#AA),a
+	in a,(#A9)
+	and %00100000
+	jp z,P_PRESS	; Print
+
+	in a,(#AA)
+	and %11110000
+	or %00000101
+	out (#AA),a
+	in a,(#A9)
+	and %00000001	; (S)
+	jp z,MAINGO	; stopwatch
+
+	in a,(#AA)
+	and %11110000
+	or %00000110
+	out (#AA),a
+	in a,(#A9)
+	and %00010000	; (code)
+	jp z,MAINGO	; stopwatch
+
+	jp MLOOP4
+
+MAINOUT	call CLRMENU
+	ei
+	ld a,(OLDLLEN)
+	ld (LINL40),a
+	ld a,(OLDFUNK)
+	ld (FNKSWI),a
+	ld a,(OLDSCRN)
+	ld (SCRNMOD),a
+	call CHGMOD
+	call KILLBUF
+	ret
+
+; Dit is de MSX COMPATIBLE Help-pagina
+
+H_PRESS	ei
+	call HELPPAG
+	di
+	call PRTMENU
+	jp MLOOP2
+
+HELPPAG xor a
+	call CLS
+	ld hl,HELPDAT
+H_LOOP	ld a,(hl)
+	or a
+	jp z,HELPOUT
+	call PUTCHAR
+	inc hl
+	jp H_LOOP
+HELPOUT	call GETCHAR
+	cp 27
+	jp nz,HELPOUT
+	call PRTPICT
+	ret
+
+HELPDAT	defb "  RWL's STOPWATCH programma",10,13
+	defb 10,13
+	defb '   Let op: Dit progamma is NIET volgens',10,13
+	defb '  de MSX-standaard geschreven. Het is',10,13
+	defb '  dan namelijk niet mogelijk nauwkeurig',10,13
+	defb '  tijd te meten. Het kan dus zijn dat',10,13
+	defb '  dit programma op uw MSX (helemaal)',10,13
+	defb '  niet goed werkt!',10,13
+	defb 10,13
+	defb '   Als de diskdrive nog loopt, wacht',10,13
+	defb '  dan eerst tot die stopt. Anders zal',10,13
+	defb '  die door blijven lopen. Dit programma',10,13
+	defb '  zet namelijk de interrupt uit.',10,13
+	defb 10,13
+	defb '  Druk op ESC......',10,13
+	defb 0
+
+
+M_PRESS	jp MLOOP2
+
+P_PRESS jp MLOOP2
+
+EINDE

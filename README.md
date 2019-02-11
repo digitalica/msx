@@ -10,6 +10,7 @@ Veel ervan zijn gepubliceerd in
 - [koppie](./koppie/README.md)
 - [mousor](./joysor/README.md)
 - [old](./old/README.md)
+- [sw (stopwatch)](./sw/README.md)
 - [tracer](./tracer/README.md)
 
 
