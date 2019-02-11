@@ -1,0 +1,278 @@
+
+; FTIME maakt het mogelijk de tijd
+; van files te veranderen.
+
+; door RWL, september 1988
+
+RETURN  equ #0000
+FILE1   equ #005C
+BDOS    equ #0005
+COMMAND equ #0080
+SFIRST  equ #0011
+SNEXT   equ #0012
+OPEN    equ #000F
+CLOSE   equ #0010
+SETDMA  equ #001A
+STRING  equ #0009
+SECWRIT equ #0030
+SECREAD equ #002F
+CHAROUT equ #0002
+DRVINFO equ #001B
+
+MSXDOS  macro @FUNCTIE
+        ld c,@FUNCTIE   ; MSXDOS aanroep
+        call BDOS
+        endm
+
+CALLZ   macro @ROUTINE
+        push af         ; CALL Z, zero blijft
+        call z,@ROUTINE
+        pop af
+        endm
+
+START   ld a,(#0080)    ; argumenten?
+        cp 2
+        jp c,UITLEG
+        call GETNEW     ; uit command line
+        call CHKTIM     ; time geldig?
+        CALLZ,ERRTIM    ; anders stop
+        jp z,EXIT
+        call TIMHL
+        ld (NEWTIM),hl
+        ld de,TRANS
+        MSXDOS SETDMA   ; zet DMA
+        ld de,FILE1
+        MSXDOS SFIRST   ; zoek eerste
+        inc a
+        CALLZ,ERRFIL    ; anders stop
+        jp z,EXIT
+
+MLOOP   ld de,TRANS
+        MSXDOS OPEN
+        MSXDOS CLOSE    ; om plaats in dir. te vinden
+        ld de,BLOCK
+        MSXDOS SETDMA
+        ld a,(TRANS+25)
+        and %00001111
+        ld (SECPOS),a
+        ld a,(TRANS+25)
+        rra
+        rra
+        rra
+        rra
+        and %00001111
+        ld (SECNUM),a
+        ld a,(TRANS)    ; drive num
+        MSXDOS DRVINFO
+        ld a,(ix+17)
+        ld l,a
+        ld a,(ix+18)
+        ld h,a          ; hl=sector nr. dir
+        ld a,(SECNUM)
+        ld d,0
+        ld e,a
+        add hl,de
+        ld e,l
+        ld d,h          ; de=sectornr. to read
+        ld h,1          ; 1 sector to read
+        ld a,(TRANS)
+        dec a
+        ld l,a          ; drive nr.
+        push de
+        push hl
+        MSXDOS SECREAD
+        ld de,BLOCK+22  ; tijd in dir.
+        ld h,0
+        ld a,(SECPOS)
+        ld l,a
+        add hl,hl
+        add hl,hl
+        add hl,hl
+        add hl,hl
+        add hl,hl
+        add hl,de
+        ld de,(NEWTIM)
+        ld (hl),e
+        inc hl
+        ld (hl),d
+        pop hl
+        pop de
+        MSXDOS SECWRIT
+
+PRINT   ld de,TRANS
+        MSXDOS SETDMA
+        ld de,TRANS
+        ld hl,TRANS+1
+        ld bc,8
+        ldir
+        ld a,'$'
+        ld (TRANS+8),a
+        ld (TRANS+12),a
+        ld de,TRANS
+        MSXDOS STRING
+        ld e,' '
+        MSXDOS CHAROUT
+        ld de,TRANS+9
+        MSXDOS STRING
+        ld e,10
+        MSXDOS CHAROUT
+        ld e,13
+        MSXDOS CHAROUT
+        MSXDOS SNEXT    ; zoek volgende
+        inc a
+        jp nz,MLOOP
+EXIT    MSXDOS RETURN
+
+ERRFIL  ld de,FILERR
+        MSXDOS STRING
+        jp UITLEG
+
+ERRTIM  ld de,TIMERR
+        MSXDOS STRING
+
+UITLEG  ld de,HELPTXT
+        MSXDOS STRING
+        ret
+
+FILERR  defb 10,13
+        defb '  FILE NIET GEVONDEN!',10,13
+        defb '$'
+
+TIMERR  defb 10,13
+        defb '  TIJD ONGELDIG!',10,13
+        defb '$'
+
+HELPTXT defb 10,13
+        defb '  FTIME 2.00 is een extern',10,13
+        defb '  DOS commando om de file-',10,13
+        defb '  tijd te veranderen.',10,13
+        defb 10,13
+        defb '  Syntax:',10,13
+        defb '  FTIME <filespec> <tijd>',10,13
+        defb 10,13
+        defb '  <filespec> is een gewone',10,13
+        defb '  filenaam, wildcards zijn',10,13
+        defb '  toegestaan.',10,13
+        defb '  <tijd> wordt geschreven:',10,13
+        defb '  UU:MM:SS. Met daarachter',10,13
+        defb "  eventueel 'p' of 'P'. De",10,13
+        defb '  tijd verdwijnt door voor',10,13
+        defb "  U, M en S '0' te nemen.",10,13
+        defb  10,13
+        defb '                       RWL',10,13
+        defb 10,13
+        defb '$'
+
+GETNEW  ld bc,COMMAND+1 ; sla lengte over
+        ld de,0
+        ld hl,0
+        call TOSPACE    ; eerstevolgende spatie
+        call NOSPACE    ; begin f-naam
+        call TOSPACE    ; eerste spatie
+        call NUMBER
+        ld e,l          ; e is de uren
+        call NUMBER
+        ld d,l          ; d is de minuten
+        call NUMBER     ; hl is seconden
+        ld a,(bc)
+        or 32
+        cp 'p'
+        ret nz
+        ld a,e
+        add a,12
+        jp c,NOTIME
+        ld e,a
+        ret
+
+NOTIMES pop de          ; uit subroutine
+NOTIME  ld de,-1
+        ld hl,-1
+        ret
+
+TOSPACE dec bc          ; naar spatie
+TLOOP   inc bc
+        ld a,(bc)
+        cp 13
+        jp z,NOTIMES
+        cp ' '
+        jr nz,TLOOP
+        ret
+
+NOSPACE dec bc          ; naar niet-spatie
+NLOOP   inc bc
+        ld a,(bc)
+        cp 13
+        jp z,NOTIMES
+        cp ' '
+        jr z,NLOOP
+        ret
+        
+NUMBER  ld hl,0         ; lees getal
+        dec bc
+NLOOP1  inc bc
+        ld a,(bc)
+        cp 13
+        ret z
+        cp '0'
+        jp c,NLOOP1
+        cp '9'+1
+        jp nc,NLOOP1
+NLOOP2  push de
+        add hl,hl
+        ld d,h
+        ld e,l
+        add hl,hl
+        add hl,hl
+        add hl,de
+        sub '0'
+        ld d,0
+        ld e,a
+        add hl,de
+        pop de
+        inc bc
+        ld a,(bc)
+        cp '0'
+        ret c
+        cp '9'+1
+        ret nc
+        cp 13
+        ret z
+        jp NLOOP2
+
+CHKTIM  ld a,d          ; kijkt of tijd geldig is
+        cp 60           ; Zero als ongeldig
+        jp nc,CTERR     ; minuten ok?
+        ld a,e
+        cp 24           ; uren ok?
+        jp nc,CTERR
+        ld a,l
+        cp 60           ; seconden ok?
+        jp nc,CTERR
+        ret             ; er is Cy, dus NZ
+CTERR   xor a           ; zet zero
+        ret
+
+TIMHL   sla l
+        sla l
+        srl d
+        rr l
+        srl d
+        rr l
+        srl d
+        rr l            ; l=MMMSSSSS
+        ld a,e
+        rlca
+        rlca
+        rlca
+        or d
+        ld h,a          ; h=HHHHHMMM
+        ret
+
+SECNUM  defb 0
+SECPOS  defb 0
+NEWTIM  defw 0
+
+TRANS
+
+BLOCK   equ TRANS+37
+rlca
