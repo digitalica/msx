@@ -1,6 +1,6 @@
 # Printerutils
-Een paar utilities om printer in anders stand te zetten, vanaf MSXDOS prompt.
-Ik had een FAX120 matrix printer, maar codes waren toen vermoed ik vrij standaard.
+Een paar utilities om printer in andere stand te zetten, vanaf MSXDOS prompt.
+Ik had een FAX-120 matrix printer, maar codes waren toen vermoed ik vrij standaard.
 
 - ACCPRT [source](./ACCPRT.GEN.TXT)
 - ELITE [source](./ELITE.GEN.TXT)
