@@ -10,5 +10,8 @@ Biedt oa:
 - popup op scherm (dus scherm opmaak blijft bestaan)
 
 
+Beschreven op 
+[Generation MSX](https://www.generation-msx.nl/software/mst/tracer/release/4825/).
+
 
 [back](../README.md)
