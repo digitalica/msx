@@ -1,0 +1,153 @@
+
+; OLD haald na een NEW of RESET
+; een basic programma terug, en
+; zet daarbij alle systeem vars.
+; weer goed.
+; by RWL   april 1988
+
+
+TXTTAB	equ #F676  ; prog.
+VARTAB	equ #F6C2  ; vars.
+ARYTAB	equ #F6C4  ; arrays
+STREND	equ #F6C6  ; free
+
+PUTPNT	equ #F3F8
+GETPNT	equ #F3FA
+KEYBUF	equ #FBF0
+
+GICINI	equ #0090  ; init PLAY/PSG
+PLAY	equ #F975  ; startadres
+
+CLS	equ #00C3
+CHPUT	equ #00A2
+
+	defb #FE
+	defw START
+	defw EIND
+	defw START
+
+	org PLAY
+
+START	call GICINI	; init play
+	ld ix,(TXTTAB)	; startadres
+	inc ix
+	inc ix		; eerste bytes
+	inc ix
+	inc ix
+	ld a,(ix)
+	or a
+	jp z,WRONG2
+	inc ix
+LOOP1	ld b,0
+LOOP1L	ld a,(ix)
+	or a
+	jr nz,AGAIN1	; zoek '0'
+	ld l,(ix+1)
+	ld h,(ix+2)
+	ld a,l
+	or h		; end of text
+	jr z,FOUND1
+	dec hl
+	ld a,(hl)
+	or a		; pointer
+	jr z,FOUND1
+AGAIN1	inc ix		; next byte
+	djnz LOOP1L
+	dec ix
+	ld (TXTTAB),ix
+	jp WRONG
+
+FOUND1	push ix
+	 push ix
+	 pop hl	; hl=adres eol
+	 inc hl	; hl=adres next line
+
+	 ld ix,(TXTTAB)
+	 ld (ix),l
+	 ld (ix+1),h	; set adres
+
+	pop hl
+	inc hl
+
+LOOP2	dec hl
+	ld a,(hl)
+	or a
+	jr nz,WRONG
+	inc hl
+	ld c,(hl)
+	ld a,c
+	inc hl
+	ld b,(hl)
+	or b
+	jr z,FOUND2
+	inc hl
+	ld a,(hl)
+	inc hl
+	or (hl)
+	jr z,WRONG	; line num=0
+	ld h,b
+	ld l,c
+	jr LOOP2
+
+FOUND2	inc hl
+	inc hl
+	ld (VARTAB),hl
+	ld (ARYTAB),hl
+	ld (STREND),hl
+
+	xor a
+	call CLS
+	ld hl,TEXT1
+
+LOOP3	ld a,(hl)
+	or a
+	jr z,LIST
+	call CHPUT
+	inc hl
+	jr LOOP3
+
+LIST	ld de,KEYBUF
+	ld hl,LISTTXT
+	ld bc,LISTEND-LISTTXT
+	ld (GETPNT),de
+	ldir
+	ld (PUTPNT),de
+	ret
+
+WRONG	ld hl,(TXTTAB)
+	ld e,(hl)
+	inc hl
+	ld d,(hl)
+	dec hl	; hl=adres start text
+	push de	; de=adres next line
+	pop ix
+	ex de,hl
+	sbc hl,de
+	ld a,h
+	cp 1
+	jp c,LOOP1	; verschil<512
+
+WRONG2	ld hl,(TXTTAB)
+	ld (hl),0
+	inc hl
+	ld (hl),0
+	xor a
+	call CLS
+	ld hl,TEXT2
+	jr LOOP3
+
+TEXT1	defm "RWL's OLD is klaar!"
+	defb 10,13
+	defb 0
+
+TEXT2	defm "Geen BASIC te redden!"
+	defb 10,13
+	defb 0
+
+LISTTXT	defm "LIST"
+	defb 13
+LISTEND
+
+EIND
+ 10,13
+	de
