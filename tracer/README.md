@@ -1,6 +1,6 @@
 # Tracer
 
-[TRACER.GEN.TXT]()
+[source](./TRACER.GEN.TXT)
 
 Een debugger voor MSX Basic. Het is een TSR, die in MemMan geladen kan worden. 
 Biedt oa:
