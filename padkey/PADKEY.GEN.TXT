@@ -1,0 +1,248 @@
+* L+, P+, TablePrint, WritePRNfile
+        
+; PADKEY maakt dat een TOUCHPAD als
+; een toetsenbord van functietoetsen
+; gebruikt kan worden. Het programma
+; zal door een BASIC loader onder de 
+; CLEAR-grens gezet moeten worden.
+; toepassingen:
+;               - hex. toetsenbord
+;               - num. toetsenbord
+;               - toetsenbord met alle
+;                 chars.
+;               - toepassingen in andere
+;                 programma's
+
+CHECKIO equ #014A       ;is I/O being done?
+KEYBUF  equ #FBF0       ;keyboard buffer
+PUTPNT  equ #F3F8       ;to put keys
+GETPNT  equ #F3FA       ;to get keys
+LDPROG  equ #F87C       ; <>0 while loading
+GETPAD  equ #00DB       ;to read pad
+BEEP    equ #00C0       ;to beep
+XKEYS   equ 2   ; read as: 2^2 keys
+YKEYS   equ 2   ; read as: 2^2 keys
+
+        defb #FE
+        defw START
+        defw EIND
+        defw START
+
+        org #C000
+
+START   push af
+        call CHECKIO    ; doing I/O?
+        jp nz,FASTEX    ; exit if so
+        ld a,(LDPROG)   ; loading?
+        or a
+        jp nz,FASTEX    ; exit if so
+        push de         ; else save
+        push bc         ; other reg.s
+        push hl
+        jr TEXTPR
+TEXTPR  ld hl,TEXTPR-1
+        ld (hl),REALST-TEXTPR
+        ld hl,TEXT
+        ld de,KEYBUF
+        ld bc,GETXY-TEXT
+LOOPTXT ld a,(hl)
+        xor 0           ; to code the
+        add a,0         ; text.....
+        nop
+        ld (de),a
+        inc de
+        inc hl
+        dec bc
+        ld a,b
+        or c
+        jr nz,LOOPTXT
+        ld hl,KEYBUF
+        ld (GETPNT),hl
+        ld hl,KEYBUF+GETXY-TEXT
+        ld (PUTPNT),hl
+
+REALST  push ix
+        push iy
+        exx
+        ex af,af'
+        push af
+        push bc
+        push de
+        push hl
+        ld d,0          ; nr. of pad 0/4
+        push de
+        ld a,d
+        call GETPAD     ; pad pressed?
+        pop de
+        or a            ; a=0?
+        jr nz,GETXY     ; if pressed
+        ld a,d
+        add a,3         ; nr. trigger
+        call GETPAD
+        or a            ; a=0?
+        jr nz,TRIGGER
+        xor a
+        ld (FLAG),a     ; reset flag
+        jp EXIT
+
+TRIGGER ld a,(FLAG)
+        or a
+        jp nz,EXIT      ; if flag set
+        dec a           ; a=255
+        ld (FLAG),a     ; set flag
+        ld hl,2.EXP.YKEYS*2.EXP.XKEYS
+        jp GETDEF       ; get definition
+
+
+FLAG    defb 0
+
+TEXT    defm 'PADKEY by RWL is '
+        defm 'ge'
+        defb 139
+        defm 'nstalleerd!'
+        defb 3          ; CTRL-STOP
+
+GETXY   ld a,(FLAG)
+        or a
+        jr nz,EXIT      ; if flag set
+        dec a           ; a=255
+        ld (FLAG),a     ; set flag
+        inc d           ; next PAD call
+        push de
+        ld a,d
+        call GETPAD
+        pop de
+        ld e,a          ; E := x coord
+        inc d
+        push de
+        ld a,d
+        call GETPAD
+        pop de
+        ld d,a          ; D := y coord
+        
+        ld b,9-YKEYS    ; number y-keys
+LOOPX   srl d
+        djnz LOOPX
+        rl d
+        ld b,9-XKEYS    ; number x-keys
+LOOPY   srl e
+        djnz LOOPY
+        rl e
+
+        ld h,0
+        ld l,d
+        ld b,XKEYS+1
+LOOPHL  add hl,hl
+        djnz LOOPHL
+        srl h
+        rr l
+        ld d,0
+        add hl,de
+GETDEF  add hl,hl
+        ld de,TEXTTAB
+        add hl,de       ; hl=adress of pointer
+        ld e,(hl)
+        inc hl
+        ld d,(hl)       ; de=pointer
+        inc hl
+        ld c,(hl)
+        inc hl
+        ld h,(hl)
+        ld l,c          ; hl=next pointer
+        xor a           ; Cy = 0
+        sbc hl,de       ; l=length
+        ld b,l          ; b=length
+        ld h,d          ; hl=adress
+        ld l,e
+
+        ld a,b
+        or a
+        jr z,EXIT       ; if len=0
+        jr LOOPBUF
+
+LOOPBUF ld a,(hl)
+        inc hl
+        push hl         ; save textp.
+        ld hl,(PUTPNT)
+        ld (hl),a
+        inc hl
+        xor a           ; Cy=0
+        ld de,KEYBUF+40
+        sbc hl,de
+        jr nz,OVER      ; buffer wrap
+        ld hl,KEYBUF
+        ld de,0
+OVER    add hl,de
+        ld de,(GETPNT)
+        xor a
+        sbc hl,de
+        jr z,SPEXIT     ; buffer full
+        add hl,de
+        ld (PUTPNT),hl
+        pop hl
+        djnz LOOPBUF
+        call BEEP
+        jr EXIT
+
+SPEXIT  pop hl
+EXIT    pop hl
+        pop de
+        pop bc
+        pop af
+        ex af,af'
+        exx
+        pop iy
+        pop ix
+        pop hl
+        pop bc
+        pop de
+FASTEX  pop af
+HOOK    ret     ; here the old hook
+        ret     ; is to be placed.
+        ret
+        ret
+        ret
+        ret
+
+TEXTTAB defw TEXT0
+        defw TEXT1
+        defw TEXT2
+        defw TEXT3
+        defw TEXT4
+        defw TEXT5
+        defw TEXT6
+        defw TEXT7
+        defw TEXT8
+        defw TEXT9
+        defw TEXTA
+        defw TEXTB
+        defw TEXTC
+        defw TEXTD
+        defw TEXTE
+        defw TEXTF
+        defw TEXTTRG
+        defw EIND
+
+TEXT0   defm 'PEEK('
+TEXT1   defm 'INP('
+TEXT2   defm ' PRINT'
+TEXT3   defm ' INPUT'
+TEXT4   defm 'VAL('
+TEXT5   defm 'STR$('
+TEXT6   defm ' POKE'
+TEXT7   defm ' READ'
+TEXT8   defm 'LEN('
+TEXT9   defm 'LEFT$('
+TEXTA   defm ' DATA'
+TEXTB   defm '&h'
+TEXTC   defm 'RIGHT$('
+TEXTD   defm 'MID$('
+TEXTE   defm ' IF'
+TEXTF   defm ' THEN'
+TEXTTRG defm ')'
+
+EIND
+
+
+TEXTB   defm '&h'
+TEXTC   defm 'RIGHT$('
